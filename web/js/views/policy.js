@@ -26,7 +26,9 @@ export async function render(el) {
   el.innerHTML = `<div class="page">
     <div class="ph"><div><h1>Gates and policy</h1><p>Five hard gates, no weighted score. Each gate extracts quoted facts, a judge answers typed questions, and rules derive the result. Every edit is versioned and the previous file is kept, so any change can be restored.</p></div>
       <div class="act"><button class="glow-btn" id="new"><sl-icon name="plus-lg"></sl-icon>New gate</button></div></div>
-    <div class="card" style="margin-bottom:14px"><div class="hd"><h2 class="sec">Disposition policy</h2><span class="sec-sub">ordered, first match wins · newest saved version is in force</span></div><div class="bd flush">
+    <div class="card" style="margin-bottom:14px" id="policy"><div class="hd"><h2 class="sec">Disposition policy</h2><span class="chip ghost mono">v${esc(cfg.policy.id)}</span><span class="sec-sub">ordered, first match wins</span><span class="sp"></span>
+      <button class="ghost-btn sm" id="pol-hist"><sl-icon name="clock-history"></sl-icon>History</button>
+      <button class="ghost-btn sm" id="pol-edit"><sl-icon name="pencil"></sl-icon>Edit</button></div><div class="bd flush">
       ${pol.rules.map((r, i) => `<div class="rule"><span class="i">${i + 1}</span><div style="flex:1"><code>${esc(r.when)}</code> <span class="dim">· ${esc(WHEN[r.when] || '')}</span></div><sl-icon name="arrow-right" class="dim"></sl-icon><div style="flex:1.3;font-weight:550">${esc(r.disposition)}</div></div>`).join('')}</div></div>
     <div class="stack">${cfg.gates.map((g, i) => gateCard(g, i, cfg.gates.length)).join('')}</div>
     <div class="card" style="margin-top:14px"><div class="hd"><h2 class="sec">Change history</h2><span class="sec-sub">${hist.length} saved versions</span></div><div class="bd flush">
@@ -36,6 +38,8 @@ export async function render(el) {
         : '<div class="empty" style="padding:22px">No edits yet. Each save keeps the previous version here.</div>'}</div></div></div>`;
 
   $('#new', el).addEventListener('click', () => editor(null, TEMPLATE(), '', reload));
+  $('#pol-edit', el).addEventListener('click', () => policyEditor(cfg.policy, reload));
+  $('#pol-hist', el).addEventListener('click', () => policyHistory(reload));
   $$('[data-edit]', el).forEach(b => b.addEventListener('click', () => { const g = cfg.gates.find(x => x.file === b.dataset.edit); editor(g.file, g.parsed, g.text, reload); }));
   $$('[data-del]', el).forEach(b => b.addEventListener('click', () => confirmDelete(cfg.gates.find(x => x.file === b.dataset.del), reload)));
   $$('[data-move]', el).forEach(b => b.addEventListener('click', async () => {
@@ -86,6 +90,110 @@ function confirmDelete(g, done) {
     catch (e) { toast(esc(e.message), 'crit'); }
   };
   customElements.whenDefined('sl-dialog').then(() => requestAnimationFrame(() => d.show()));
+}
+
+// ---------- policy ----------
+const DISPOSITIONS = ['Under review (analyst to confirm one or more gates)', 'Under review (gates that cannot be closed are named)',
+  'Reviewed and not covered (draft, name the failed gate)', 'Coverable, subject to conditions'];
+
+async function policyEditor(policy, done) {
+  const Y = await YAML();
+  let rules = clone(policy.parsed.rules || []), mode = 'form', yamlText = policy.text, valid = { errors: [], warnings: [] };
+  const hadComments = /(^|\s)#/.test(policy.text);
+  const d = $('#drawer');
+  d.classList.add('wide');
+  d.label = `Edit disposition policy · v${policy.id}`;
+  d.innerHTML = `<div id="pe-status"></div>
+    <div class="bar"><div class="seg" id="pe-mode"><button class="on" data-m="form">Form</button><button data-m="yaml">YAML</button></div><span class="sp"></span>
+      <span class="dim" style="font-size:12px" id="pe-ver"></span>
+      <button class="ghost-btn" id="pe-cancel">Cancel</button><button class="glow-btn" id="pe-save"><sl-icon name="check-lg"></sl-icon>Save policy</button></div>
+    <div id="pe-body"></div>`;
+  d.show();
+  const body = $('#pe-body', d);
+  const textNow = () => (mode === 'yaml' ? yamlText : Y.dump({ rules }, { lineWidth: 110 }));
+  const rowBtns = (i, n) => `<span class="ed-rb"><button class="icon-btn" data-mv="${i}" data-d="-1" ${i === 0 ? 'disabled' : ''} title="Up"><sl-icon name="arrow-up"></sl-icon></button><button class="icon-btn" data-mv="${i}" data-d="1" ${i === n - 1 ? 'disabled' : ''} title="Down"><sl-icon name="arrow-down"></sl-icon></button><button class="icon-btn" data-rm="${i}" title="Remove"><sl-icon name="x-lg"></sl-icon></button></span>`;
+
+  function drawForm() {
+    body.innerHTML = `<div class="ed-sec"><div class="ed-h">Rules<small>checked top to bottom; the first condition that holds sets the disposition</small><span class="sp"></span><button class="ghost-btn sm" data-add><sl-icon name="plus-lg"></sl-icon>Rule</button></div>
+      ${rules.map((r, i) => `<div class="ed-row"><span class="i rule-i">${i + 1}</span><span class="dim" style="font-size:12px">when</span>
+        <select class="fi" data-k="when" data-i="${i}" style="max-width:300px">${Object.entries(WHEN).map(([k, label]) => `<option value="${k}" ${r.when === k ? 'selected' : ''}>${esc(label)}</option>`).join('')}${r.when in WHEN ? '' : `<option selected value="${esc(r.when ?? '')}">${esc(r.when ?? '(choose)')}</option>`}</select>
+        <span class="dim" style="font-size:12px">then</span><input class="fi" list="pe-disp" data-k="disposition" data-i="${i}" value="${esc(r.disposition ?? '')}">${rowBtns(i, rules.length)}</div>`).join('')}
+      <datalist id="pe-disp">${DISPOSITIONS.map(x => `<option value="${esc(x)}">`).join('')}</datalist></div>`;
+  }
+  function drawYaml() {
+    body.innerHTML = `<textarea class="fi" data-mono id="pe-yaml" spellcheck="false" style="min-height:50vh;font-size:12.5px;line-height:1.6">${esc(yamlText)}</textarea>
+      <p class="dim" style="font-size:12px">Saving from this tab writes the text exactly as shown, comments included.</p>`;
+  }
+  const draw = () => (mode === 'form' ? drawForm() : drawYaml());
+
+  body.addEventListener('input', e => {
+    const t = e.target;
+    if (t.id === 'pe-yaml') yamlText = t.value;
+    else if (t.dataset.k) rules[+t.dataset.i][t.dataset.k] = t.value;
+    schedule();
+  });
+  body.addEventListener('click', e => {
+    const add = e.target.closest('[data-add]'), mv = e.target.closest('[data-mv]'), rm = e.target.closest('[data-rm]');
+    if (add) { const last = rules.at(-1); rules = last?.when === 'otherwise' ? [...rules.slice(0, -1), { when: 'any_fail', disposition: '' }, last] : [...rules, { when: 'otherwise', disposition: '' }]; }
+    if (mv) { const i = +mv.dataset.mv, j = i + +mv.dataset.d; [rules[i], rules[j]] = [rules[j], rules[i]]; }
+    if (rm) rules.splice(+rm.dataset.rm, 1);
+    if (add || mv || rm) { drawForm(); schedule(); }
+  });
+  $$('#pe-mode button', d).forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.m === mode) return;
+    if (b.dataset.m === 'yaml') { if (JSON.stringify(rules) !== JSON.stringify(policy.parsed.rules)) yamlText = Y.dump({ rules }, { lineWidth: 110 }); }
+    else {
+      try { const parsed = Y.load(yamlText) || {}; rules = Array.isArray(parsed.rules) ? parsed.rules : []; }
+      catch (err) { toast('Fix the YAML before switching: ' + esc(err.message), 'crit'); return; }
+    }
+    mode = b.dataset.m;
+    $$('#pe-mode button', d).forEach(x => x.classList.toggle('on', x === b));
+    draw();
+  }));
+  $('#pe-cancel', d).addEventListener('click', () => d.hide());
+
+  let timer;
+  function schedule() { clearTimeout(timer); timer = setTimeout(check, 300); }
+  async function check() {
+    try { valid = await api('policy/validate', { method: 'POST', body: JSON.stringify({ text: textNow() }) }); } catch (e) { valid = { errors: [e.message], warnings: [] }; }
+    const changed = mode === 'yaml' ? yamlText !== policy.text : JSON.stringify(rules) !== JSON.stringify(policy.parsed.rules);
+    $('#pe-ver', d).textContent = changed ? 'saves as a new version' : `v${policy.id} · no changes`;
+    $('#pe-status', d).innerHTML = valid.errors.length ? `<sl-alert variant="danger" open style="margin-bottom:12px"><sl-icon slot="icon" name="exclamation-octagon"></sl-icon><b>Fix before saving</b><ul style="margin:6px 0 0;padding-left:18px">${valid.errors.map(x => `<li>${esc(x)}</li>`).join('')}</ul></sl-alert>`
+      : valid.warnings.length ? `<sl-alert variant="warning" open style="margin-bottom:12px"><sl-icon slot="icon" name="exclamation-triangle"></sl-icon>${valid.warnings.map(esc).join('<br>')}</sl-alert>`
+      : `<div class="dim" style="font-size:12px;margin-bottom:10px;display:flex;gap:6px;align-items:center"><sl-icon name="check2-circle" style="color:var(--good)"></sl-icon>Valid${mode === 'form' && hadComments && changed ? ' · saving from the form rewrites the YAML without its comments; use the YAML tab to keep them' : ''}</div>`;
+    $('#pe-save', d).disabled = !!valid.errors.length || !changed;
+  }
+  $('#pe-save', d).addEventListener('click', async () => {
+    try {
+      const r = await api('policy', { method: 'PUT', body: JSON.stringify({ text: textNow() }) });
+      d.hide();
+      toast(`Saved the disposition policy as <b>v${esc(r.id)}</b>. New runs use it; past runs keep the version they ran under.`, 'good');
+      done();
+    } catch (e) { toast(esc(e.message), 'crit'); }
+  });
+  draw();
+  check();
+}
+
+async function policyHistory(done) {
+  const hist = await api('policy/history');
+  const d = $('#drawer');
+  d.classList.remove('wide');
+  d.label = 'Disposition policy · history';
+  const list = () => `<table class="t compact"><tr><th>Version</th><th>Saved</th><th></th></tr>${hist.map(h => `<tr><td class="mono">v${esc(h.id)} ${h.current ? '<span class="chip good">In force</span>' : ''}</td><td class="tnum dim">${fmtDT(stampDate(h.stamp))}</td>
+    <td class="n"><button class="ghost-btn sm" data-pv="${esc(h.id)}"><sl-icon name="eye"></sl-icon>View</button>${h.current ? '' : ` <button class="ghost-btn sm" data-pr="${esc(h.id)}"><sl-icon name="arrow-counterclockwise"></sl-icon>Restore</button>`}</td></tr>`).join('')}</table>`;
+  d.innerHTML = list();
+  d.onclick = async e => {
+    const view = e.target.closest('[data-pv]'), back = e.target.closest('[data-back]'), restore = e.target.closest('[data-pr]');
+    if (view) { const h = hist.find(x => String(x.id) === view.dataset.pv); d.innerHTML = `<div class="bar" style="margin-bottom:10px"><button class="ghost-btn sm" data-back><sl-icon name="arrow-left"></sl-icon>All versions</button><span class="sp"></span><span class="mono dim">v${esc(h.id)}</span></div><pre class="code">${esc(h.text)}</pre>`; }
+    if (back) d.innerHTML = list();
+    if (restore) {
+      try { const r = await api('policy/restore', { method: 'POST', body: JSON.stringify({ id: +restore.dataset.pr }) }); d.hide(); toast(`Restored v${esc(restore.dataset.pr)} as <b>v${esc(r.id)}</b>`, 'good'); done(); }
+      catch (err) { toast(esc(err.message), 'crit'); }
+    }
+  };
+  d.addEventListener('sl-after-hide', () => { d.onclick = null; }, { once: true });
+  d.show();
 }
 
 // ---------- editor ----------

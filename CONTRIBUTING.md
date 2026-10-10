@@ -47,6 +47,9 @@ record plus the exact gate YAML it ran with), `model_calls`, `catalogs` and `cat
 and `gate_history`, and `policies` (newest row in force). Every table has row-level security on and no
 policies, so Supabase's public Data API sees nothing; the app connects to Postgres directly.
 
+- **Gates and policy** are edited in the console (Gates and policy view). Both are versioned: every gate edit
+  keeps the prior state in `gate_history`, every policy save adds a row to `policies`, and each run records
+  the gate definitions and policy version it ran under.
 - **The app** uses `DATABASE_URL` from `.env`: the project's session pooler URL, from the dashboard's
   Connect button, with the database password and `?sslmode=require`.
 - **Tests and Playwright** never use `.env`'s database. They build throwaway databases from
