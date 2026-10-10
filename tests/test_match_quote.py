@@ -110,6 +110,11 @@ class MatchQuoteCases:
         self.assertEqual(self.m(page, q), "reflowed")
 
 
+    @unittest.expectedFailure
+    def test_known_bug_whitespace_quote_is_exact(self):
+        # norm("  ") is "", and "" is in every page.
+        self.assertIsNone(self.m("any page at all", "   "))
+
 for _name, _fn in IMPLS.items():
     _cls = type(f"MatchQuote_{_name}", (MatchQuoteCases, unittest.TestCase), {"match": staticmethod(_fn)})
     globals()[_cls.__name__] = _cls
@@ -149,6 +154,11 @@ class Parity(unittest.TestCase):
             with self.subTest(page=repr(page), quote=repr(quote)):
                 self.assertEqual(IMPLS["rust"](page, quote), IMPLS["python"](page, quote))
 
+
+class Dispatch(unittest.TestCase):
+    def test_lone_surrogate_falls_back_to_python(self):
+        page = "bad \ud800 text: the minimum investment is $250,000"
+        self.assertEqual(dataroom.match_quote(page, "minimum investment is $250,000"), "exact")
 
 class DataRoomVerify(unittest.TestCase):
     def setUp(self):

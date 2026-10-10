@@ -8,3 +8,7 @@ __pycache__/
 # Generated from data rooms; contains extracted fund data
 catalog/
 runs/
+
+# Rust build output (./build-rust.sh)
+rust/*/target/
+sg/*.so

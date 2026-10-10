@@ -43,7 +43,15 @@ try:
     from ._verify import match_quote as match_quote_rs
 except ImportError:
     match_quote_rs = None
-match_quote = match_quote_rs or match_quote_py
+
+
+def match_quote(text, quote):
+    if match_quote_rs:
+        try:
+            return match_quote_rs(text, quote)
+        except UnicodeEncodeError:
+            pass  # a lone surrogate in the text, which Rust strings cannot hold
+    return match_quote_py(text, quote)
 
 
 class DataRoom:
