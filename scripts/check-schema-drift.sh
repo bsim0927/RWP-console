@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Migration consistency: the database built by replaying supabase/migrations must match the declared
-# schema in supabase/schemas (declarative schemas). `supabase db diff` prints the SQL needed to turn
-# the migrated database into the declared one; any output means they have drifted apart.
+# Migration consistency: replaying supabase/migrations must produce exactly the declared schema in
+# supabase/schemas. `supabase db schema declarative sync --no-apply` writes a new migration file for any
+# difference between the two (it builds both in a shadow database, so it needs Docker). A new file
+# therefore means drift; it is printed, removed, and the check fails.
 #
-# Fix drift by generating the missing migration:  npx supabase db diff -f <name>
+# Fix drift by keeping the generated migration:  npx supabase db schema declarative sync --name <change>
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 shopt -s nullglob
@@ -12,12 +13,15 @@ if [[ ${#schemas[@]} -eq 0 ]]; then
   echo "schema drift: no declared schemas in supabase/schemas yet, skipping"
   exit 0
 fi
-diff_sql=$(npx --no-install supabase db diff --local 2>/dev/null | grep -vE '^\s*(--.*)?$' || true)
-if [[ -n $diff_sql ]]; then
+mkdir -p supabase/migrations
+before=$(ls supabase/migrations)
+npx --no-install supabase db schema declarative sync --no-apply --name schema_drift_check
+added=$(comm -13 <(echo "$before") <(ls supabase/migrations))
+if [[ -n $added ]]; then
   echo "::error file=supabase/schemas::migrations do not produce the declared schema"
   echo "Schema drift. Replaying supabase/migrations does not produce supabase/schemas. Missing change:"
-  echo "$diff_sql"
-  echo "Generate the migration with: npx supabase db diff -f <describe_the_change>"
+  for f in $added; do cat "supabase/migrations/$f"; rm "supabase/migrations/$f"; done
+  echo "Generate the migration with: npx supabase db schema declarative sync --name <describe_the_change>"
   exit 1
 fi
 echo "schema drift: none (${#schemas[@]} schema file(s))"

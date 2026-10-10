@@ -46,7 +46,7 @@ Not in use yet; the scaffold and its CI are ready.
 
 - **Declarative schema** in `supabase/schemas/*.sql` is the source of truth for what the database
   looks like. **Migrations** in `supabase/migrations/` are how it gets there.
-- Change the schema file, then generate the migration: `npx supabase db diff -f <describe_change>`.
+- Change the schema file, then generate the migration: `npx supabase db schema declarative sync --name <describe_change>`.
 - Migrations are append-only once merged. Never edit, rename or delete one on `main`; add another.
 - CI replays every migration on an empty Postgres, runs `supabase db lint`, fails if the result
   differs from `supabase/schemas` (drift), and resets twice to catch non-repeatable migrations.

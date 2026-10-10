@@ -76,13 +76,15 @@ jobs:
       - run: npx supabase link --project-ref "${{ vars.SUPABASE_PROJECT_REF }}"
       - name: Every migration in the repo is applied remotely, and nothing else is
         run: |
-          npx supabase migration list --linked | tee migrations.txt
-          # Rows with a local version but no remote one (or the reverse) mean the two have diverged.
-          if awk -F'|' '{ l=$1; r=$2; gsub(/ /,"",l); gsub(/ /,"",r) }
-                        (l ~ /^[0-9]{14}$/ || r ~ /^[0-9]{14}$/) && l != r { bad=1 }
-                        END { exit !bad }' migrations.txt; then
-            echo "::error::Remote migration history differs from supabase/migrations on main"; exit 1
+          npx supabase migration list --linked --output-format json > migrations.json
+          # Each row is {local, remote, time}; a version present on only one side means divergence.
+          jq -e '.migrations | type == "array"' migrations.json > /dev/null \
+            || { echo "::error::Unrecognised 'supabase migration list' output; update this parser"; cat migrations.json; exit 1; }
+          diverged=$(jq -r '.migrations[] | select(.local != .remote) | "local=\(.local) remote=\(.remote)"' migrations.json)
+          if [[ -n "$diverged" ]]; then
+            echo "::error::Remote migration history differs from supabase/migrations on main"; echo "$diverged"; exit 1
           fi
+          echo "$(jq '.migrations | length' migrations.json) migration(s), identical locally and remotely"
       - name: Remote schema has no changes made outside migrations
         run: |
           out=$(npx supabase db diff --linked --schema public | grep -vE '^\s*(--.*)?$' || true)
