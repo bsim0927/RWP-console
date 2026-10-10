@@ -1,0 +1,20 @@
+id: total_annual_cost
+version: 2
+extractor:
+  sources:
+    doc_types: [terms, offering document, governing agreement, ddq, deck]
+    sections: ["\\bfees?\\b", "expenses?", "compensation", "carried interest", "incentive", "performance (fee|allocation)", "servicing", "sales load|commission", "borrowings|leverage"]
+  keywords: [management fee, performance fee, incentive fee, servicing fee, hurdle, administration fee, expense ratio, subscription fee, sales load]
+  rules: "Quote each fee layer with its percentage."
+  fields:
+    - { name: management_fee, recurring: true, description: "Management fee percent" }
+    - { name: servicing_fee, recurring: true, description: "Distribution or servicing fee percent" }
+    - { name: admin_expenses, recurring: true, description: "Administration or operating expenses percent" }
+    - { name: incentive_fee, description: "Performance or incentive fee and hurdle" }
+    - { name: upfront_load, description: "Subscription fee or sales load" }
+questions:
+  - { id: sufficient, type: bool, q: "Do `facts` disclose both a management fee and an incentive or performance fee?" }
+derive:
+  - { if: "sufficient < 0.7", then: Incomplete }
+  - { if: "total_pct is not None and total_pct > 3.0", then: Route with disclosure }  # placeholder threshold
+  - { then: Pass }

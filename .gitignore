@@ -1,0 +1,10 @@
+.env
+.env.*
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+
+# Generated from data rooms; contains extracted fund data
+catalog/
+runs/

@@ -1,0 +1,19 @@
+id: track_record
+version: 2
+extractor:
+  sources:
+    doc_types: [track record, deck, offering document, ddq]
+    sections: ["track record", "performance", "returns?", "prior (funds?|investments|experience)", "investment (history|experience|results)", "composite"]
+    whole_docs_under: 12
+  keywords: [net IRR, gross IRR, net return, gross return, since inception, track record, performance, TVPI, MOIC]
+  rules: "Quote performance statements. Say whether each is net or gross and fund level or deal level only if the page says so."
+  fields:
+    - { name: net_return, description: "Net return or net IRR stated" }
+    - { name: gross_return, description: "Gross return stated" }
+    - { name: fund_level_record, description: "Fund-level performance since inception" }
+questions:
+  - { id: sufficient, type: bool, q: "Does `facts` contain any historical fund return, such as an IRR, multiple or percentage return?" }
+  - { id: basis, type: choice, q: "Does `facts` state the fund's historical return as net of fees, as gross of fees, or not at all?", options: [net, gross, not_stated], criteria: { net: "A return explicitly stated net of fees and expenses", gross: "A return stated gross, or a return with no net designation", not_stated: "No historical return appears in the facts" } }
+derive:
+  - { if: "basis == 'net' and sufficient >= 0.7", then: Pass }
+  - { then: Fail }   # a deal-level, gross-only or absent record fails

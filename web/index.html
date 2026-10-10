@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en" class="sl-theme-dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RWP Console</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230d1016'/%3E%3Cpath d='M9 22V10h3v12zm5.5 0V14h3v8zm5.5 0v-5h3v5z' fill='%237088ff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/vendor/shoelace/themes/dark.css">
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/vendor/shoelace/shoelace-autoloader.js"></script>
+</head>
+<body>
+<div class="shell">
+  <aside class="nav">
+    <a class="brand" href="#/">
+      <span class="logo"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9 22V10h3v12zm5.5 0V14h3v8zm5.5 0v-5h3v5z"/></svg></span>
+      <span class="brand-t"><b>RWP Console</b><small>RWP alternatives</small></span>
+    </a>
+    <nav id="nav">
+      <div class="nav-h">Workspace</div>
+      <a href="#/" data-route="overview"><sl-icon name="grid-1x2"></sl-icon><span>Overview</span></a>
+      <a href="#/screening" data-route="screening"><sl-icon name="funnel"></sl-icon><span>Screening</span><em id="nav-review" class="nav-count" hidden></em></a>
+      <a href="#/catalogs" data-route="catalogs"><sl-icon name="journal-text"></sl-icon><span>Catalogs</span></a>
+      <a href="#/files" data-route="files"><sl-icon name="folder2-open"></sl-icon><span>Files</span></a>
+      <a href="#/search" data-route="search"><sl-icon name="search"></sl-icon><span>Document search</span></a>
+      <div class="nav-h">Insight</div>
+      <a href="#/analytics" data-route="analytics"><sl-icon name="bar-chart-line"></sl-icon><span>Analytics</span></a>
+      <a href="#/logs" data-route="logs"><sl-icon name="cpu"></sl-icon><span>Agent monitor</span><em id="nav-jobs" class="nav-count live" hidden></em></a>
+      <a href="#/policy" data-route="policy"><sl-icon name="sliders"></sl-icon><span>Gates and policy</span></a>
+    </nav>
+    <div class="nav-foot" id="nav-foot"></div>
+  </aside>
+  <div class="col">
+    <header class="top">
+      <div class="crumbs" id="crumbs"></div>
+      <div class="omni" id="omni">
+        <sl-input id="omni-in" size="small" placeholder="Jump to a fund or search documents" autocomplete="off" pill>
+          <sl-icon name="search" slot="prefix"></sl-icon>
+          <kbd slot="suffix">/</kbd>
+        </sl-input>
+        <div class="omni-list" id="omni-list" hidden></div>
+      </div>
+      <div class="top-r" id="top-r"></div>
+    </header>
+    <main id="view" tabindex="-1"></main>
+  </div>
+</div>
+<sl-drawer id="drawer" placement="end" class="drawer"></sl-drawer>
+<div id="tip" class="tip" role="tooltip" hidden></div>
+<div id="toasts" class="toasts"></div>
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

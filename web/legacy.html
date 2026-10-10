@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Screening Gate</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--ink:#1c2330;--mute:#6b7585;--line:#e1e5ec;--pass:#1f8a4c;--fail:#c9372c;--inc:#b7791f;--route:#2b6cb0;--nyr:#8a94a6;--accent:#3b4a6b;--s-retrieve:#7c8db5;--s-extract:#c28a3a;--s-verify:#3f9a8a;--s-judge:#7b5cc2;--s-derive:#4a8c3f;--s-skipped:#a4acba;--g0:#3b6fd4;--g1:#d4793b;--g2:#3f9a8a;--g3:#a34ab3;--g4:#8a94a6}
+@media(prefers-color-scheme:dark){:root{--bg:#12151b;--panel:#1b2029;--ink:#e6e9ef;--mute:#8e98aa;--line:#2b3240;--pass:#4cc582;--fail:#f07167;--inc:#e0a84a;--route:#6aa6e8;--nyr:#7c869a;--accent:#9db0d6;--s-retrieve:#8fa2cc;--s-extract:#e0a84a;--s-verify:#56b8a6;--s-judge:#a58cea;--s-derive:#6cc25c;--s-skipped:#7c869a;--g0:#6aa6e8;--g1:#f0a066;--g2:#56b8a6;--g3:#c88ae0;--g4:#8e98aa}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--ink);display:flex;height:100vh}
+aside{width:290px;border-right:1px solid var(--line);background:var(--panel);overflow:auto;flex:none}
+aside h1{font-size:15px;margin:0;padding:14px 16px;border-bottom:1px solid var(--line)}
+.fund{padding:10px 16px;border-bottom:1px solid var(--line);cursor:pointer}
+.fund:hover,.fund.on{background:var(--bg)}.fund .n{font-weight:600;font-size:13px}.fund .d{font-size:12px;color:var(--mute)}
+main{flex:1;overflow:auto;padding:20px 24px}
+.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+select,button{font:inherit;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink)}
+button.go{background:var(--accent);color:var(--bg);border-color:var(--accent);cursor:pointer}
+h2{margin:0 0 4px;font-size:20px}.sub{color:var(--mute);font-size:12px;margin-bottom:16px}
+.flow{display:flex;align-items:stretch;gap:0;margin:8px 0 22px;overflow-x:auto;padding-bottom:6px}
+.node{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:120px}
+.node.sm{display:flex;flex-direction:column;justify-content:center;text-align:center}
+.arrow{align-self:center;color:var(--mute);padding:0 8px;font-size:18px}
+.gates{display:flex;flex-direction:column;gap:6px}
+.gate{cursor:pointer;border-left:5px solid var(--nyr);min-width:210px}
+.gate.on{outline:2px solid var(--accent)}
+.gate .t{font-weight:600;font-size:13px}.gate .r{font-size:12px;margin-top:2px}
+.gate.Pass{border-left-color:var(--pass)}.gate.Fail{border-left-color:var(--fail)}.gate.Incomplete{border-left-color:var(--inc)}.gate.Route{border-left-color:var(--route)}
+.rev{font-size:11px;color:var(--inc);font-weight:600}
+.disp{font-weight:700;font-size:13px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.card h3{margin:0 0 8px;font-size:14px}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mute);font-weight:600;font-size:12px}
+.q{font-family:ui-monospace,monospace;font-size:12px;color:var(--mute)}
+.chip{display:inline-block;padding:1px 7px;border-radius:9px;font-size:11px;border:1px solid var(--line);color:var(--mute)}
+.bad{color:var(--fail)}.ok{color:var(--pass)}
+.prob{display:flex;align-items:center;gap:8px;margin:2px 0;font-size:12px}.prob .lab{width:80px;color:var(--mute)}
+.prob .bg{flex:1;background:var(--bg);height:8px;border-radius:4px;overflow:hidden;max-width:260px}.prob .fg{height:100%;background:var(--accent)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--mute);margin-top:6px}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.mx td,.mx th{text-align:center;padding:5px 6px}.mx td:first-child,.mx th:first-child{text-align:left}
+.cell{display:inline-block;min-width:62px;padding:2px 6px;border-radius:5px;font-size:11px;background:var(--bg);color:var(--mute);border:1px solid var(--line)}
+.cell.run{color:var(--ink);border-color:var(--accent);animation:pulse 1s infinite}.cell.done{color:var(--ink)}
+@keyframes pulse{50%{opacity:.45}}
+.pbar{height:6px;background:var(--bg);border-radius:3px;overflow:hidden;margin:6px 0 10px}.pbar>span{display:block;height:100%;background:var(--accent);transition:width .3s}
+svg text{fill:var(--mute);font-size:11px}
+.tabs{display:flex;gap:4px;margin:2px 0 14px;border-bottom:1px solid var(--line)}
+.tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:8px 12px;cursor:pointer;color:var(--mute)}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}.stat b{display:block;font-size:20px}.stat span{font-size:12px;color:var(--mute)}
+tr.dim td{opacity:.5}tr.doc{cursor:pointer}tr.doc:hover td{background:var(--bg)}
+.tier{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px}
+.secs{padding:4px 0 8px 10px;font-size:12px;columns:2;column-gap:24px;max-height:420px;overflow:auto}.secs div{break-inside:avoid;margin:1px 0}
+.empty{color:var(--mute);padding:40px;text-align:center}
+</style></head><body>
+<aside><h1>Screening Gate</h1><div id="funds"></div></aside>
+<main id="main"><div class="empty">Pick a fund on the left.</div></main>
+<script>
+const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let funds=[],cur=null,runId=null,data=null,gateSel=null,tab='screen',catOpen=new Set(),catFilter='all',showAll=true;
+const tabs=()=>`<div class="tabs"><button data-tab="screen" class="${tab==='screen'?'on':''}">Screen</button><button data-tab="catalog" class="${tab==='catalog'?'on':''}">Catalog</button></div>`;
+document.addEventListener('click',e=>{const t=e.target.closest('[data-tab]');if(t){tab=t.dataset.tab;render();}});
+const cls=r=>r.startsWith('Route')?'Route':r==='Not yet run'?'nyr':r;
+const short=f=>f.split('/').pop();
+async function loadFunds(){funds=await (await fetch('/api/funds')).json();
+ $('#funds').innerHTML=funds.map(f=>`<div class="fund ${cur===f.id?'on':''}" data-id="${esc(f.id)}"><div class="n">${esc(f.name)}</div><div class="d">${f.latest?esc(f.latest.disposition):'no runs yet'}</div></div>`).join('');
+ document.querySelectorAll('.fund').forEach(e=>e.onclick=()=>pick(e.dataset.id));}
+async function pick(id,stamp){cur=id;const f=funds.find(x=>x.id===id);runId=stamp||f.runs[0]||null;gateSel=null;
+ data=runId?await (await fetch(`/api/run/${id}/${runId}`)).json():null;render();loadFundsQuiet();}
+async function loadFundsQuiet(){funds=await (await fetch('/api/funds')).json();document.querySelectorAll('.fund').forEach(e=>e.classList.toggle('on',e.dataset.id===cur));}
+function render(){const f=funds.find(x=>x.id===cur);if(tab==='catalog'){renderCatalog();return;}let h=`<h2>${esc(f.name)}</h2>${tabs()}<div class="sub">${data?`Run ${esc(runId)} · extractor ${esc(data.summary.extractor)} · judge ${esc(data.summary.judge)}`:'Not screened yet'}</div>
+<div class="bar"><select id="ex"><option>claude</option></select><select id="jd"><option>jev</option><option>claude</option></select>
+<button class="go" id="run">Run screen</button><select id="runsel">${f.runs.map(r=>`<option ${r===runId?'selected':''}>${r}</option>`).join('')}</select><span id="msg" class="bad"></span></div>`;
+ if(data){const g=data.gates;
+  h+=`<div class="flow"><div class="node sm"><b>Extraction</b><div class="q">facts + quotes</div></div><div class="arrow">→</div><div class="gates">${g.map(x=>`<div class="node gate ${cls(x.result)} ${gateSel===x.gate?'on':''}" data-g="${x.gate}"><div class="t">${esc(x.gate.replaceAll('_',' '))}</div><div class="r">${esc(x.result)} ${x.review?'<span class="rev">· analyst review</span>':''}</div></div>`).join('')}</div>
+  <div class="arrow">→</div><div class="node sm"><b>Judge</b><div class="q">${esc(data.summary.judge)}</div></div><div class="arrow">→</div><div class="node sm"><div class="disp">${esc(data.summary.disposition)}</div></div></div>`;
+  const ids=g.map(x=>x.gate);h+=steps2(g).length?`<div class="card"><h3>Run timeline · ${data.summary.seconds??''}s total</h3>${waterfall(steps2(g),ids,0,false)}<div style="margin-top:10px">${matrix(steps2(g),ids,0)}</div></div>`:'<div class="sub">This run predates step timing.</div>';const s=gateSel&&g.find(x=>x.gate===gateSel);h+=s?detail(s):'<div class="empty">Click a gate to see its evidence and reasoning.</div>';}
+ h+='<div id="hist"></div>';
+ $('#main').innerHTML=h;
+ fetch('/api/history/'+cur).then(r=>r.json()).then(rows=>{const e=document.getElementById('hist');if(e)e.innerHTML=history(rows);});
+ if($('#ex')){$('#run').onclick=runScreen;$('#runsel').onchange=e=>pick(cur,e.target.value);
+  document.querySelectorAll('.gate').forEach(e=>e.onclick=()=>{gateSel=e.dataset.g;render();});}}
+function detail(g){if(!g.brief)return`<div class="card"><h3>${esc(g.gate)}</h3>${esc(g.note||'')}</div>`;
+ const b=g.brief;let h='';
+ if(g.routing&&g.routing.length)h+=`<div class="card"><h3>What the extractor read (${g.pages_offered.length} pages)</h3><table><tr><th>Document</th><th>Section</th><th>Pages</th><th>Why</th></tr>`+g.routing.map(r=>`<tr><td>${esc(r.doc)}</td><td>${esc(r.section)}</td><td class="q">${r.pages.length?`p.${r.pages[0]}${r.pages[1]>r.pages[0]?'–'+r.pages[1]:''}`:''}${r.truncated?' (cut)':''}</td><td class="q">${esc(r.why)}</td></tr>`).join('')+'</table></div>';
+ h+=`<div class="card"><h3>Facts extracted (${b.facts.length}), quotes verified on the cited page</h3><table><tr><th>Field</th><th>Quote</th><th>Source</th></tr>`+
+ b.facts.map(f=>`<tr><td>${esc(f.field)}</td><td>${esc(f.quote)}</td><td class="q">${esc(short(f.file))}<br>p.${f.page}${f.match==='reflowed'?'<br>matched across layout':''}</td></tr>`).join('')+`</table>`;
+ if(b.not_found.length)h+=`<p><span class="bad">Not found:</span> ${b.not_found.map(n=>`<span class="chip">${esc(n)}</span>`).join(' ')}</p>`;
+ if(g.rejected.length)h+=`<p class="bad">Rejected, quote not on cited page (${g.rejected.length}): ${g.rejected.map(r=>esc(r.field)).join(', ')}</p>`;
+ if(b.checks&&b.checks.total_pct!=null)h+=`<p>Code check, recurring fees summed: <b>${b.checks.total_pct}%</b></p>`;
+ h+=`</div><div class="card"><h3>Judge answers</h3>`;
+ g.questions.forEach(q=>{const p=g.answers[q.id];h+=`<div style="margin-bottom:10px"><div>${esc(q.q)} <span class="q">[${q.id}, ${q.type}]</span></div>`+Object.entries(p).map(([k,v])=>`<div class="prob"><span class="lab">${esc(k)}</span><span class="bg"><span class="fg" style="width:${(v*100).toFixed(0)}%;display:block"></span></span>${(v*100).toFixed(0)}%</div>`).join('')+`</div>`;});
+ h+=`<p>Derived result: <b>${esc(g.result)}</b>${g.review?` · <span class="rev">low confidence on ${esc(g.low_confidence.join(', '))}, goes to analyst</span>`:''}</p>
+ <p class="q">gate v${g.gate_version} · brief ${g.brief_sha} · ${g.seconds}s · pages offered ${g.pages_offered.length}</p></div>`;return h;}
+const STEPS=['retrieve','extract','verify','judge','derive'];
+const gname=g=>g.replaceAll('_',' ');
+function steps2(gates){return gates.flatMap(g=>g.timeline||[]);}
+function matrix(steps,gates,now){
+ return `<table class="mx"><tr><th>Gate</th>${STEPS.map(x=>`<th>${x}</th>`).join('')}</tr>`+gates.map(g=>{
+  const mine=steps.filter(e=>e.gate===g);
+  if(mine.length===1&&mine[0].step==='skipped')return`<tr><td>${esc(gname(g))}</td><td colspan="5"><span class="cell done">${esc(mine[0].detail)} (not automated)</span></td></tr>`;
+  return`<tr><td>${esc(gname(g))}</td>${STEPS.map(st=>{const e=mine.find(x=>x.step===st);
+   if(!e)return'<td><span class="cell">·</span></td>';
+   if(e.end==null)return`<td><span class="cell run">${((now-e.start)).toFixed(1)}s…</span></td>`;
+   return`<td><span class="cell done" title="${esc(e.detail)}">${(e.end-e.start).toFixed(1)}s</span><div class="q">${esc(e.detail)}</div></td>`;}).join('')}</tr>`;}).join('')+'</table>';}
+function waterfall(steps,gates,now,active){
+ const W=760,L=130,R=10,rowH=26,H=gates.length*rowH+34;
+ const tmax=Math.max(1,...steps.map(e=>e.end??now),active?now:0)*1.04;
+ const x=t=>L+(W-L-R)*t/tmax;
+ let svg=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Timeline of pipeline steps per gate">`;
+ const ticks=5;for(let i=0;i<=ticks;i++){const t=tmax*i/ticks;svg+=`<line x1="${x(t)}" x2="${x(t)}" y1="6" y2="${H-22}" stroke="var(--line)"/><text x="${x(t)}" y="${H-8}" text-anchor="middle">${t.toFixed(1)}s</text>`;}
+ gates.forEach((g,i)=>{const y=10+i*rowH;svg+=`<text x="${L-8}" y="${y+13}" text-anchor="end">${esc(gname(g))}</text>`;
+  steps.filter(e=>e.gate===g).forEach(e=>{const end=e.end??now;const w=Math.max(2,x(end)-x(e.start));
+   svg+=`<rect x="${x(e.start)}" y="${y}" width="${w}" height="16" rx="3" fill="var(--s-${e.step})" opacity="${e.end==null?.55:1}"><title>${esc(e.step)}: ${(end-e.start).toFixed(2)}s ${esc(e.detail)}</title></rect>`;});});
+ svg+='</svg>';
+ const used=[...new Set(steps.map(e=>e.step))];
+ return svg+`<div class="legend">${used.map(u=>`<span><i style="background:var(--s-${u})"></i>${u}</span>`).join('')}</div>`;}
+function history(rows){
+ if(rows.length<1)return'';
+ const ids=[...new Set(rows.flatMap(r=>Object.entries(r.gates).filter(([k,v])=>v.min_confidence!=null).map(([k])=>k)))];
+ const W=760,H=190,L=40,R=14,T=10,B=34,n=rows.length;
+ const x=i=>n===1?L+(W-L-R)/2:L+(W-L-R)*i/(n-1), y=v=>T+(H-T-B)*(1-v);
+ let svg=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Decisive confidence per gate across runs">`;
+ [0,.25,.5,.75,1].forEach(v=>svg+=`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L-6}" y="${y(v)+4}" text-anchor="end">${v}</text>`);
+ svg+=`<line x1="${L}" x2="${W-R}" y1="${y(.75)}" y2="${y(.75)}" stroke="var(--inc)" stroke-dasharray="4 3"/>`;
+ rows.forEach((r,i)=>svg+=`<text x="${x(i)}" y="${H-18}" text-anchor="middle">${i+1}</text><text x="${x(i)}" y="${H-5}" text-anchor="middle" style="font-size:9px">${esc(r.judge.slice(0,4))}</text>`);
+ ids.forEach((id,k)=>{const pts=rows.map((r,i)=>[i,r.gates[id]?.min_confidence]).filter(p=>p[1]!=null);
+  svg+=`<polyline fill="none" stroke="var(--g${k%5})" stroke-width="2" points="${pts.map(p=>x(p[0])+','+y(p[1])).join(' ')}"/>`+pts.map(p=>`<circle cx="${x(p[0])}" cy="${y(p[1])}" r="3.5" fill="var(--g${k%5})"><title>${esc(gname(id))}, run ${p[0]+1}: ${p[1]}</title></circle>`).join('');});
+ svg+='</svg>';
+ return`<div class="card"><h3>Confidence across runs</h3>${svg}<div class="legend">${ids.map((id,k)=>`<span><i style="background:var(--g${k%5})"></i>${esc(gname(id))}</span>`).join('')}<span><i style="background:var(--inc)"></i>review threshold 0.75</span></div>
+ <div class="q" style="margin-top:6px">Lowest decisive-answer confidence per gate. Run number on the axis, judge under it.</div></div>`;}
+let timer=null,live=null;
+async function runScreen(){$('#msg').textContent='';$('#run').disabled=true;$('#run').textContent='Running…';
+ const r=await fetch('/api/screen',{method:'POST',body:JSON.stringify({fund:cur,extractor:$('#ex').value,judge:$('#jd').value})});const j=await r.json();
+ if(j.error){$('#msg').textContent=j.error;$('#run').disabled=false;$('#run').textContent='Run screen';return;}
+ const fund=cur;
+ timer=setInterval(async()=>{const s=await (await fetch('/api/job/'+j.job)).json();
+  if(cur!==fund){clearInterval(timer);return;}
+  const el=document.getElementById('live');
+  if(s.status==='running'){const done=s.steps.filter(e=>e.end!=null).length,total=s.gates.length*5;
+   if(el)el.innerHTML=liveCard(s,done,total);else renderLive(s,done,total);return;}
+  clearInterval(timer);
+  if(s.status==='error'){$('#msg').textContent=s.error;$('#run').disabled=false;$('#run').textContent='Run screen';if(el)el.remove();return;}
+  await loadFunds();pick(cur,s.run);},400);}
+function liveCard(s,done,total){const pct=Math.min(100,Math.round(100*done/total));
+ return`<h3>Running… ${s.elapsed}s · ${done} steps finished</h3><div class="pbar"><span style="width:${pct}%"></span></div>${matrix(s.steps,s.gates,s.elapsed)}<div style="margin-top:12px">${waterfall(s.steps,s.gates,s.elapsed,true)}</div>`;}
+function renderLive(s,done,total){const c=document.createElement('div');c.className='card';c.id='live';c.innerHTML=liveCard(s,done,total);$('#main').querySelector('.bar').after(c);}
+const TIERS=['core','supporting','review','noise','external'];
+const TCOL={core:'var(--pass)',supporting:'var(--route)',review:'var(--inc)',noise:'var(--nyr)',external:'var(--g3)'};
+async function renderCatalog(rebuild){const f=funds.find(x=>x.id===cur);
+ $('#main').innerHTML=`<h2>${esc(f.name)}</h2>${tabs()}<div class="empty">${rebuild?'Rebuilding catalog…':'Loading catalog…'}</div>`;
+ let c;
+ try{
+  if(rebuild){const rb=await fetch(`/api/catalog/${cur}/rebuild`,{method:'POST'});if(!rb.ok)throw new Error('rebuild failed: HTTP '+rb.status+' '+(await rb.text()).slice(0,200));}
+  const r=await fetch('/api/catalog/'+cur);c=await r.json();
+ }catch(err){if(tab==='catalog')$('#main').querySelector('.empty').outerHTML=`<p class="bad">${esc(err.message||err)}</p>`;return;}
+ if(tab!=='catalog')return;
+ if(c.error){$('#main').innerHTML+=`<p class="bad">${esc(c.error)}</p>`;return;}
+ c.docs.forEach(d=>{d.sections=d.sections||[];d.structure=d.structure||{method:'catalog predates section index, rebuild',coverage:0,terms:0};});
+ const S=c.summary,D=c.docs,byId=Object.fromEntries(D.map(d=>[d.doc_id,d]));
+ let h=`<h2>${esc(f.name)}</h2>${tabs()}
+ <div class="stats"><div class="stat"><b>${S.pages.toLocaleString()}</b><span>pages in ${S.files} files</span></div>
+ <div class="stat"><b>${S.exact_duplicates.pages}</b><span>exact duplicates (${S.exact_duplicates.files} files)</span></div>
+ <div class="stat"><b>${S.superseded.pages}</b><span>superseded versions (${S.superseded.files} files)</span></div>
+ <div class="stat"><b>${S.canonical.pages.toLocaleString()}</b><span>canonical pages</span></div>
+ <div class="stat"><b>${S.core_pages}</b><span>core pages for the gates</span></div></div>
+ <div class="card"><h3>Where the pages go</h3>${funnel(S)}</div>
+ <div class="bar"><select id="tf"><option value="all">All tiers</option>${TIERS.map(t=>`<option ${catFilter===t?'selected':''}>${t}</option>`).join('')}</select>
+ <label style="font-size:13px"><input type="checkbox" id="sa" ${showAll?'checked':''}> show duplicates and superseded</label>
+ <button id="rb">Rebuild catalog</button>
+ <span class="q">Types from ${S.type_sources.filename} filenames, ${S.type_sources.folder} folders, ${S.type_sources.none} unknown · structure: ${S.with_toc??0} ToC, ${S.with_bookmarks} bookmarks, ${S.with_terms??0} term sheets, ${S.unstructured??0} none · ${S.sections??0} sections · ${S.scan_pages} scan-like pages</span></div>
+ <div class="card"><table><tr><th>Document</th><th>Type</th><th>Status</th><th>As of</th><th>Pages</th><th>Relation</th></tr>`;
+ const rows=D.filter(d=>(catFilter==='all'||d.tier===catFilter)&&(showAll||d.canonical))
+  .sort((a,b)=>TIERS.indexOf(a.tier)-TIERS.indexOf(b.tier)||a.doc_type.localeCompare(b.doc_type)||a.name.localeCompare(b.name));
+ for(const d of rows){
+  let rel='';
+  if(d.duplicate_of)rel=`<span class="bad">Duplicate of</span> ${esc(byId[d.duplicate_of].folder.split('/').pop()||'root')}/…`;
+  else if(d.superseded_by)rel=`<span class="bad">Superseded by</span> ${esc(byId[d.superseded_by].name)}<div class="q">${esc(d.group_reason||'')}</div>`;
+  else if(d.version_group&&(d.group_reason||'').includes('review'))rel=`<span class="rev">Review: cannot tell which is current</span>`;
+  else if(d.version_group)rel=`<span class="ok">Current version</span><div class="q">${esc(d.group_reason||'')}</div>`;
+  else if(d.series)rel='<span class="chip">series</span>';
+  const open=catOpen.has(d.doc_id);
+  h+=`<tr class="doc ${d.canonical?'':'dim'}" data-doc="${d.doc_id}"><td><span class="tier" style="background:${TCOL[d.tier]||'var(--nyr)'}"></span>${esc(d.name)}<div class="q">${esc(d.folder||'(root)')}</div></td>
+  <td>${esc(d.doc_type)}<div class="q">${esc(d.type_source)}</div></td><td>${esc(d.status)}</td>
+  <td>${esc(d.as_of||'')}<div class="q">${d.date_source&&d.date_source!=='filename'?esc(d.date_source):''}</div></td>
+  <td>${d.pages}${d.scan_pages?`<div class="q">${d.scan_pages} scan</div>`:''}</td><td>${rel}${d.sections.length?`<div class="q">${d.sections.length} sections, ${Math.round(100*d.structure.coverage)}% of pages · ${open?'▾':'▸'}</div><div class="q">${esc(d.structure.method)}</div>`:''}</td></tr>`;
+  if(open&&d.sections.length)h+=`<tr><td colspan="6"><div class="secs">${d.sections.slice(0,200).map(x=>`<div style="padding-left:${(x.level-1)*12}px">${esc(x.title)} <span class="q">p.${x.start}${x.end>x.start?'–'+x.end:''} · ${esc(x.source)}${x.located&&x.located!=='body heading'?' (estimated)':''}</span></div>`).join('')}</div></td></tr>`;}
+ h+='</table></div>';
+ $('#main').innerHTML=h;
+ $('#tf').onchange=e=>{catFilter=e.target.value;renderCatalog();};
+ $('#sa').onchange=e=>{showAll=e.target.checked;renderCatalog();};
+ $('#rb').onclick=()=>renderCatalog(true);
+ document.querySelectorAll('tr.doc').forEach(tr=>tr.onclick=()=>{const id=tr.dataset.doc;if(!byId[id].sections.length)return;catOpen.has(id)?catOpen.delete(id):catOpen.add(id);renderCatalog();});}
+function funnel(S){const W=760,L=170,R=60,rowH=30,max=S.pages,x=v=>(W-L-R)*v/max;
+ const rows=[['All pages',[[S.pages,'var(--nyr)']]],['− exact duplicates',[[S.exact_duplicates.pages,'var(--fail)']]],['− superseded versions',[[S.superseded.pages,'var(--inc)']]],
+  ['Canonical, by tier',TIERS.filter(t=>S.by_tier[t]).map(t=>[S.by_tier[t].pages,TCOL[t],t])]];
+ let svg=`<svg viewBox="0 0 ${W} ${rows.length*rowH+8}" width="100%" role="img" aria-label="Page funnel from all pages to canonical pages by tier">`;
+ rows.forEach(([lab,segs],i)=>{const y=6+i*rowH;let cx=L;svg+=`<text x="${L-8}" y="${y+14}" text-anchor="end">${lab}</text>`;
+  segs.forEach(([v,col,t])=>{const w=Math.max(v?2:0,x(v));svg+=`<rect x="${cx}" y="${y}" width="${w}" height="20" rx="3" fill="${col}"><title>${t?t+': ':''}${v} pages</title></rect>`;cx+=w;});
+  const tot=segs.reduce((a,s)=>a+s[0],0);svg+=`<text x="${cx+6}" y="${y+14}">${tot.toLocaleString()}</text>`;});
+ svg+='</svg>';
+ return svg+`<div class="legend">${TIERS.filter(t=>S.by_tier[t]).map(t=>`<span><i style="background:${TCOL[t]}"></i>${t}: ${S.by_tier[t].files} files, ${S.by_tier[t].pages} pages</span>`).join('')}</div>`;}
+loadFunds();
+</script></body></html>
