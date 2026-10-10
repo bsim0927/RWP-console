@@ -2,10 +2,11 @@
 Local only. `python3 screen.py <folder with _index/pages.jsonl> [--extractor claude] [--judge claude|jev]`
 
 Flow: retrieve pages -> extract cited facts -> verify every quote is on its cited page -> judge typed
-questions -> derive gate result by rule -> reduce to a disposition (policy.yaml) -> log to runs/.
+questions -> derive gate result by rule -> reduce to a disposition (the policy) -> save the run to the database.
 
-Change a gate by editing gates/*.yaml (fields, questions, derive rules). Change how gates combine in policy.yaml.
-Keys live in .env (ANTHROPIC_API_KEY, JEV_API_KEY); run ./setup-keys.sh to set them.
+Data rooms stay local (the data root). Everything else, runs, model calls, catalogs, gates and policy, lives in
+Supabase Postgres (DATABASE_URL in .env). Change a gate in the console's Gates and policy view; every edit is
+versioned. Keys live in .env (ANTHROPIC_API_KEY, JEV_API_KEY); run ./setup-keys.sh to set them.
 
 Console: `python3 server.py [data-root]` -> http://127.0.0.1:8765 (`PORT=` to change). Overview, screening queue,
 per-fund screen/catalog/files/search/history/report, catalogs, file browser, document search, analytics, logs,

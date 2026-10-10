@@ -45,6 +45,12 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.12", "3.14"]
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ["54322:5432"] # the local Supabase port, so TEST_DATABASE_URL's default works unchanged
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
@@ -100,6 +106,12 @@ jobs:
     name: Playwright recipes
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ["54322:5432"] # the local Supabase port, so TEST_DATABASE_URL's default works unchanged
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6

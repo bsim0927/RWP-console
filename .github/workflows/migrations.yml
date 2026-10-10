@@ -57,6 +57,29 @@ jobs:
       - if: always()
         run: make db-stop
 
+  deploy:
+    name: Apply migrations to Supabase
+    needs: [hygiene, replay]
+    # Production changes only from main, after the replay passed, one deploy at a time. Add a required
+    # reviewer to the `production` environment in repo settings to approve each deploy by hand.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.SUPABASE_PROJECT_REF != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    concurrency: { group: supabase-deploy, cancel-in-progress: false }
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version-file: .nvmrc, cache: npm }
+      - run: npm ci
+      - run: npx supabase link --project-ref "${{ vars.SUPABASE_PROJECT_REF }}"
+      - name: Pending migrations
+        run: npx supabase migration list --linked
+      - run: npx supabase db push --linked --yes
+
   remote-drift:
     name: Live project matches main
     needs: hygiene

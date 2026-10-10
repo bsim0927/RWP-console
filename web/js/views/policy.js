@@ -26,10 +26,10 @@ export async function render(el) {
   el.innerHTML = `<div class="page">
     <div class="ph"><div><h1>Gates and policy</h1><p>Five hard gates, no weighted score. Each gate extracts quoted facts, a judge answers typed questions, and rules derive the result. Every edit is versioned and the previous file is kept, so any change can be restored.</p></div>
       <div class="act"><button class="glow-btn" id="new"><sl-icon name="plus-lg"></sl-icon>New gate</button></div></div>
-    <div class="card" style="margin-bottom:14px"><div class="hd"><h2 class="sec">Disposition policy</h2><span class="sec-sub">ordered, first match wins · edit policy.yaml to change</span></div><div class="bd flush">
+    <div class="card" style="margin-bottom:14px"><div class="hd"><h2 class="sec">Disposition policy</h2><span class="sec-sub">ordered, first match wins · newest saved version is in force</span></div><div class="bd flush">
       ${pol.rules.map((r, i) => `<div class="rule"><span class="i">${i + 1}</span><div style="flex:1"><code>${esc(r.when)}</code> <span class="dim">· ${esc(WHEN[r.when] || '')}</span></div><sl-icon name="arrow-right" class="dim"></sl-icon><div style="flex:1.3;font-weight:550">${esc(r.disposition)}</div></div>`).join('')}</div></div>
     <div class="stack">${cfg.gates.map((g, i) => gateCard(g, i, cfg.gates.length)).join('')}</div>
-    <div class="card" style="margin-top:14px"><div class="hd"><h2 class="sec">Change history</h2><span class="sec-sub">${hist.length} saved versions in gates/.history</span></div><div class="bd flush">
+    <div class="card" style="margin-top:14px"><div class="hd"><h2 class="sec">Change history</h2><span class="sec-sub">${hist.length} saved versions</span></div><div class="bd flush">
       ${hist.length ? `<table class="t compact"><tr><th>Saved</th><th>Gate</th><th>Version</th><th>Why</th><th></th></tr>${hist.slice(0, 40).map(h => `<tr><td class="tnum dim">${fmtDT(stampDate(h.stamp))}</td><td>${esc(gateName(h.id || h.gate_file))}</td><td class="mono">v${esc(h.version)}</td>
         <td>${h.reason === 'deleted' ? '<span class="chip crit"><sl-icon name="trash"></sl-icon>Removed</span>' : '<span class="chip ghost">Before an edit</span>'}</td>
         <td class="n"><button class="ghost-btn sm" data-view="${esc(h.file)}"><sl-icon name="eye"></sl-icon>View</button> <button class="ghost-btn sm" data-restore="${esc(h.file)}"><sl-icon name="arrow-counterclockwise"></sl-icon>Restore</button></td></tr>`).join('')}</table>`

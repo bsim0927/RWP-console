@@ -42,23 +42,30 @@ then fix it.
 
 ## Database (Supabase)
 
-Not in use yet; the scaffold and its CI are ready.
+The data rooms stay on local disk. Everything else lives in Postgres: `runs` and `run_gates` (each gate
+record plus the exact gate YAML it ran with), `model_calls`, `catalogs` and `catalog_documents`, `gates`
+and `gate_history`, and `policies` (newest row in force). Every table has row-level security on and no
+policies, so Supabase's public Data API sees nothing; the app connects to Postgres directly.
 
-- **Declarative schema** in `supabase/schemas/*.sql` is the source of truth for what the database
-  looks like. **Migrations** in `supabase/migrations/` are how it gets there.
-- Change the schema file, then generate the migration: `npx supabase db schema declarative sync --name <describe_change>`.
+- **The app** uses `DATABASE_URL` from `.env`: the project's session pooler URL, from the dashboard's
+  Connect button, with the database password and `?sslmode=require`.
+- **Tests and Playwright** never use `.env`'s database. They build throwaway databases from
+  `supabase/migrations` on a local Postgres (`make db-start`, Docker) and refuse any non-local host.
+  CI uses a Postgres 17 service container instead.
+- **Declarative schema** in `supabase/schemas/*.sql` is the source of truth for the tables. Change it,
+  then generate the migration: `npx supabase db schema declarative sync --name <describe_change>`.
 - Migrations are append-only once merged. Never edit, rename or delete one on `main`; add another.
-- CI replays every migration on an empty Postgres, runs `supabase db lint`, fails if the result
-  differs from `supabase/schemas` (drift), and resets twice to catch non-repeatable migrations.
-- Once a project exists, set the repo variable `SUPABASE_PROJECT_REF` and secrets
-  `SUPABASE_ACCESS_TOKEN` and `SUPABASE_DB_PASSWORD`. A nightly job then checks the live project
-  has exactly `main`'s migrations and no schema changes made outside them.
+- CI replays every migration on an empty Postgres, runs `supabase db lint`, fails on drift between
+  migrations and `supabase/schemas`, and resets twice to catch non-repeatable migrations. A nightly job
+  checks the live project has exactly `main`'s migrations and no schema changes made outside them.
+- The pre-database files (`runs/`, `catalog/`) can be imported once with
+  `uv run python scripts/import_local_state.py --yes` (dry run without `--yes`).
 
 ## Deployment (Vercel), planned
 
-Not deployable yet: `server.py` is a long-running local process that reads data rooms from disk and
-writes runs to `runs/`. Moving to Vercel means serverless API routes, data rooms in Supabase Storage,
-and runs and catalogs in Postgres. What is already in place:
+Not deployable yet: `server.py` is a long-running local process that reads data rooms from disk.
+Runs, catalogs and configuration are already in Postgres; moving to Vercel still means serverless API
+routes and data rooms in Supabase Storage. What is already in place:
 
 - `.github/workflows/preview-smoke.yml` runs the `@smoke` recipes against every Vercel preview
   deployment as soon as Vercel's GitHub integration is connected (`E2E_BASE_URL`).

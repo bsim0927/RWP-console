@@ -3,19 +3,18 @@
 import contextvars
 import json
 import os
-import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
-from pathlib import Path
+
+from . import store
+from .env import load_env
 
 # Call tracing. The pipeline sets CTX (fund, gate, step) and TRACE (a list) per gate; every model call
-# appends one record there and to runs/calls.jsonl, so failed runs still leave a trail.
+# appends one record there and to the model_calls table, so failed runs still leave a trail.
 CTX: contextvars.ContextVar[dict] = contextvars.ContextVar("sg_ctx", default={})  # noqa: B039  read-only, replaced via set()
 TRACE: contextvars.ContextVar[list | None] = contextvars.ContextVar("sg_trace", default=None)
-CALL_LOG = Path(__file__).resolve().parent.parent / "runs" / "calls.jsonl"
-_log_lock = threading.Lock()
 
 
 def record(provider, model, t0, *, usage=None, ok=True, error=None, output=None, input_chars=0, attempts=1):
@@ -39,24 +38,11 @@ def record(provider, model, t0, *, usage=None, ok=True, error=None, output=None,
     trace = TRACE.get()
     if trace is not None:
         trace.append(rec)
-    with _log_lock:
-        CALL_LOG.parent.mkdir(exist_ok=True)
-        with CALL_LOG.open("a") as fh:
-            fh.write(json.dumps(rec) + "\n")
+    store.record_call(rec)
     return rec
 
 
-def _load_env():
-    """Read KEY=VALUE lines from the project .env, without overriding the real environment."""
-    f = Path(__file__).resolve().parent.parent / ".env"
-    if f.exists():
-        for line in f.read_text().splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
-
-
-_load_env()
+load_env()
 
 
 def call_claude_tool(system, user, tool_name, schema):

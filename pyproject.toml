@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "RWP Console: screens fund data rooms against RWP's Manager Coverage gates."
 requires-python = ">=3.12"
 dependencies = [
+    "psycopg-pool>=3.2",
+    "psycopg[binary]>=3.2",
     "pyyaml>=6.0",
 ]
 
@@ -45,7 +47,7 @@ ignore = [
 # ---------- mypy ----------
 [tool.mypy]
 python_version = "3.12"
-files = ["sg", "server.py", "screen.py", "catalog.py", "tests", "e2e/fixtures"]
+files = ["sg", "server.py", "screen.py", "catalog.py", "tests", "e2e/fixtures", "scripts"]
 check_untyped_defs = true
 warn_unused_ignores = true
 warn_redundant_casts = true
