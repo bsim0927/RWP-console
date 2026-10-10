@@ -1,8 +1,8 @@
 """Load a data room index (_index/pages.jsonl) and retrieve pages for a gate."""
+
 import json
 import re
 from pathlib import Path
-
 
 MAX_GAP = 6  # the next quoted word is at most this many words on (5 between), e.g. a left-column label
 

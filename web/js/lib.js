@@ -1,6 +1,8 @@
 // Shared helpers: data access, formatting, status vocabulary, charts, previews.
 
+/** @param {string} s @param {ParentNode} [el] @returns {any} Shoelace elements carry props the DOM types do not know */
 export const $ = (s, el = document) => el.querySelector(s);
+/** @param {string} s @param {ParentNode} [el] @returns {any[]} */
 export const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -109,24 +111,28 @@ export function toast(msg, tone = 'accent', icon) {
 export function initTips() {
   const tip = $('#tip');
   document.addEventListener('pointerover', e => {
-    const t = e.target.closest?.('[data-tip]');
+    const t = /** @type {Element} */ (e.target).closest?.('[data-tip]');
     if (!t) return;
-    tip.innerHTML = t.dataset.tip;
+    tip.innerHTML = /** @type {HTMLElement} */ (t).dataset.tip;
     tip.hidden = false;
   });
   document.addEventListener('pointermove', e => {
     if (tip.hidden) return;
-    if (!e.target.closest?.('[data-tip]')) { tip.hidden = true; return; }
+    if (!/** @type {Element} */ (e.target).closest?.('[data-tip]')) { tip.hidden = true; return; }
     const w = tip.offsetWidth, h = tip.offsetHeight;
     let x = e.clientX + 14, y = e.clientY + 14;
     if (x + w > innerWidth - 8) x = e.clientX - w - 14;
     if (y + h > innerHeight - 8) y = e.clientY - h - 14;
     tip.style.left = x + 'px'; tip.style.top = y + 'px';
   });
-  document.addEventListener('pointerout', e => { if (e.target.closest?.('[data-tip]') && !e.relatedTarget?.closest?.('[data-tip]')) tip.hidden = true; });
+  document.addEventListener('pointerout', e => {
+    const from = /** @type {Element} */ (e.target), to = /** @type {Element | null} */ (e.relatedTarget);
+    if (from.closest?.('[data-tip]') && !to?.closest?.('[data-tip]')) tip.hidden = true;
+  });
 }
 
 // ---------- charts (plain SVG, recessive axes, thin marks, hover on every mark) ----------
+/** @param {any[]} rows @param {{ total?: number }} [opts] */
 export function hbars(rows, { total } = {}) {
   // rows: [{label, segs:[{v, color, tip}], value}]
   const max = total || Math.max(1, ...rows.map(r => r.segs.reduce((a, s) => a + s.v, 0)));
@@ -143,6 +149,7 @@ export function legend(items) {
 }
 
 // Vertical bars over an ordinal x axis. bars: [{x, v, color, tip, label}]
+/** @param {any[]} bars @param {{ h?: number, yFmt?: (v: number) => string, yMax?: number, w?: number }} [opts] */
 export function vbars(bars, { h = 180, yFmt = v => n(v), yMax, w = 760 } = {}) {
   const W = w, L = 44, R = 8, T = 10, B = 26, H = h;
   const max = yMax || Math.max(1e-9, ...bars.map(b => b.v)) * 1.1;
@@ -302,6 +309,7 @@ function highlight(text, quote) {
   return t.replace(new RegExp(`(${words.map(w => w.replace(/[.$]/g, '\\$&')).join('|')})`, 'gi'), '<mark>$1</mark>');
 }
 
+/** @param {string} path @param {{ page?: number, quote?: string, title?: string, back?: { label: string, fn: () => void } }} [opts] */
 export async function openPreview(path, { page, quote, title, back } = {}) {
   const d = $('#drawer');
   const name = path.split('/').pop();

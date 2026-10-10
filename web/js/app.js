@@ -150,7 +150,7 @@ function initOmni() {
   });
   list.addEventListener('click', () => { inp.value = ''; close(); });
   document.addEventListener('keydown', e => {
-    if (e.key === '/' && !e.target.closest('input,textarea,sl-input,sl-textarea,[contenteditable]')) { e.preventDefault(); inp.focus(); }
+    if (e.key === '/' && !/** @type {Element} */ (e.target).closest('input,textarea,sl-input,sl-textarea,[contenteditable]')) { e.preventDefault(); inp.focus(); }
   });
 }
 

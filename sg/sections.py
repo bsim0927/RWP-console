@@ -9,6 +9,7 @@ Sources, in the order they are trusted:
             of terms. Nested under the toc or bookmark section that contains them.
 Every section records its source, so a reader knows how far to trust its boundaries.
 """
+
 import re
 import statistics
 
@@ -49,9 +50,14 @@ def toc_entries(pages, scan=8):
             printed = m.group("p1") or m.group("p2")
             # Plain "Title 12" lines only count when the title carries a structural marker,
             # otherwise every sentence ending in a number would qualify.
-            if not m.group("p1") and m.group("p2") and not MARKER.match(title) and "." not in line[-40:]:
-                if not re.match(rf"^({ROMAN}|\d+)\.\s", title):
-                    continue
+            if (
+                not m.group("p1")
+                and m.group("p2")
+                and not MARKER.match(title)
+                and "." not in line[-40:]
+                and not re.match(rf"^({ROMAN}|\d+)\.\s", title)
+            ):
+                continue
             if len(title) < 3 or title.lower() in ("table of contents", "contents", "page"):
                 continue
             found.append({"title": title, "printed": int(printed) if printed else None})
@@ -76,7 +82,7 @@ def locate(entries, pages, after):
     for p in pages:
         if p["page"] <= after:
             continue
-        lines = [norm(l) for l in p["text"].splitlines() if l.strip()]
+        lines = [norm(ln) for ln in p["text"].splitlines() if ln.strip()]
         lines_by_page.append((p["page"], lines))
     floor = after + 1
     for e in entries:
@@ -112,7 +118,7 @@ def locate(entries, pages, after):
             continue
         guess = e["printed"] + off
         before = max([x["start"] for x in entries[:i] if x["start"]] or [after + 1])
-        later = [x["start"] for x in entries[i + 1:] if x["start"] and x.get("located") == "body heading"]
+        later = [x["start"] for x in entries[i + 1 :] if x["start"] and x.get("located") == "body heading"]
         nxt = min(later) if later else n_last
         if after < guess <= n_last and before <= guess <= nxt:
             e["start"], e["located"] = guess, f"printed page + offset {off:+d}"
@@ -136,8 +142,7 @@ def term_labels(pages):
                         break
                     label, j = f"{label} {n.group(1).strip()}", j + 1
                 if label.endswith(":") and 2 < len(label) < 60:
-                    out.append({"title": label.rstrip(":").strip(), "start": p["page"], "level": 3,
-                                "source": "term"})
+                    out.append({"title": label.rstrip(":").strip(), "start": p["page"], "level": 3, "source": "term"})
                 i = j + 1
             else:
                 i += 1
@@ -148,7 +153,7 @@ def close(sections, n_pages):
     """End page for each section: the page before the next section at the same or higher level."""
     for i, s in enumerate(sections):
         s["end"] = n_pages
-        for nxt in sections[i + 1:]:
+        for nxt in sections[i + 1 :]:
             if nxt["level"] <= s["level"]:
                 s["end"] = max(s["start"], nxt["start"] - (0 if nxt["start"] == s["start"] else 1))
                 break
@@ -166,8 +171,17 @@ def build_sections(pages, marks):
         top, note = [], "no structure found"
         if entries:
             off = locate(entries, pages, after=max(toc_pages))
-            top = [{"title": e["title"], "start": e["start"], "level": level_of(e["title"]),
-                    "source": "toc", "located": e.get("located")} for e in entries if e["start"]]
+            top = [
+                {
+                    "title": e["title"],
+                    "start": e["start"],
+                    "level": level_of(e["title"]),
+                    "source": "toc",
+                    "located": e.get("located"),
+                }
+                for e in entries
+                if e["start"]
+            ]
             note = f"toc on p.{','.join(map(str, toc_pages))}, {len(top)}/{len(entries)} entries placed"
             if off is not None:
                 note += f", printed-page offset {off:+d}"
@@ -183,8 +197,11 @@ def build_sections(pages, marks):
     if len(terms) < 4:
         secs = [s for s in secs if s["source"] != "term"]
     close(secs, n)
-    covered = set()
+    covered: set[int] = set()
     for s in secs:
         covered.update(range(s["start"], s["end"] + 1))
-    return secs, {"method": note, "terms": len([s for s in secs if s["source"] == "term"]),
-                  "coverage": round(len(covered) / n, 2) if n else 0}
+    return secs, {
+        "method": note,
+        "terms": len([s for s in secs if s["source"] == "term"]),
+        "coverage": round(len(covered) / n, 2) if n else 0,
+    }

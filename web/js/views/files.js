@@ -24,6 +24,7 @@ export async function render(el, r) {
 }
 
 // A folder listing with breadcrumbs, filter, and preview. Used on the Files page and inside a fund.
+/** @param {HTMLElement} box @param {{ root: string, path: string, navigate?: (p: string) => void, embedded?: boolean }} opts */
 export async function browser(box, { root, path, navigate, embedded }) {
   const go = p => navigate ? navigate(p) : load(p);
   let text = '';

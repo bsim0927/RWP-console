@@ -1,4 +1,5 @@
 """Load gates, run extract -> verify -> judge -> derive, reduce to a disposition, log it all."""
+
 import hashlib
 import json
 import re
@@ -9,9 +10,9 @@ from pathlib import Path
 
 import yaml
 
+from .catalog import load as load_catalog
 from .dataroom import DataRoom
 from .extractors import EXTRACTORS
-from .catalog import load as load_catalog
 from .judges import JUDGES
 from .llm import CTX, TRACE
 from .route import route
@@ -26,7 +27,7 @@ def load_gates(only=None):
 
 def code_checks(gate, facts):
     """Deterministic numbers. Jev is weak on arithmetic, so it never does any."""
-    ctx = {"total_pct": None}
+    ctx: dict[str, float | None] = {"total_pct": None}
     recurring = {f["name"] for f in gate["extractor"]["fields"] if f.get("recurring")}
     vals = []
     for f in facts:
@@ -83,16 +84,20 @@ class Tracker:
 
 
 def run_gate(gate, room, extractor, judge, tr, catalog=None):
-    rec = {"gate": gate["id"], "gate_version": gate.get("version"),
-           "extractor": extractor, "judge": judge}
+    rec = {"gate": gate["id"], "gate_version": gate.get("version"), "extractor": extractor, "judge": judge}
     if gate.get("static_result"):
         e = tr.begin(gate["id"], "skipped")
         tr.end(e, gate["static_result"])
-        rec.update(result=gate["static_result"], review=False, facts=[], rejected=[],
-                   note="Gate not automated in this prototype.")
+        rec.update(
+            result=gate["static_result"],
+            review=False,
+            facts=[],
+            rejected=[],
+            note="Gate not automated in this prototype.",
+        )
         return rec
     ex = gate["extractor"]
-    calls = []
+    calls: list[dict] = []
     TRACE.set(calls)  # this runs in the gate's own worker thread, so the context is per gate
     ctx = {"fund": room.name, "gate": gate["id"]}
     e = tr.begin(gate["id"], "retrieve")
@@ -104,15 +109,22 @@ def run_gate(gate, room, extractor, judge, tr, catalog=None):
     else:
         # No catalog match: fall back to keywords, and say so in the log.
         pages = room.retrieve(ex.get("keywords", []), ex.get("top_k", 6))
-        plan = [{"doc": "(keyword fallback)", "section": "top pages by keyword count",
-                 "pages": [], "why": "no catalog section matched this gate"}]
+        plan = [
+            {
+                "doc": "(keyword fallback)",
+                "section": "top pages by keyword count",
+                "pages": [],
+                "why": "no catalog section matched this gate",
+            }
+        ]
         tr.end(e, f"{len(pages)} pages by keyword fallback")
     e = tr.begin(gate["id"], "extract")
     CTX.set({**ctx, "step": "extract"})
     raw = EXTRACTORS[extractor](gate, room, pages)
     tr.end(e, f"{len(raw)} facts proposed")
     e = tr.begin(gate["id"], "verify")
-    facts, rejected = [], []
+    facts: list[dict] = []
+    rejected: list[dict] = []
     for f in raw:
         f["match"] = room.verify_quote(f["file"], f["page"], f["quote"])
         (facts if f["match"] else rejected).append(f)
@@ -135,12 +147,21 @@ def run_gate(gate, room, extractor, judge, tr, catalog=None):
     floor = gate.get("review_if", {}).get("min_confidence", 0.75)
     low = [i for i in decisive if conf[i] < floor]
     tr.end(e, result)
-    rec.update(result=result, review=bool(low), low_confidence=low, brief=brief,
-               rejected=rejected, questions=questions, answers=answers, env_for_rules=env,
-               min_confidence=round(min(conf[i] for i in decisive), 3),
-               pages_offered=[[p["file"], p["page"]] for p in pages], routing=plan,
-               brief_sha=hashlib.sha256(json.dumps(brief, sort_keys=True).encode()).hexdigest()[:12],
-               calls=calls)
+    rec.update(
+        result=result,
+        review=bool(low),
+        low_confidence=low,
+        brief=brief,
+        rejected=rejected,
+        questions=questions,
+        answers=answers,
+        env_for_rules=env,
+        min_confidence=round(min(conf[i] for i in decisive), 3),
+        pages_offered=[[p["file"], p["page"]] for p in pages],
+        routing=plan,
+        brief_sha=hashlib.sha256(json.dumps(brief, sort_keys=True).encode()).hexdigest()[:12],
+        calls=calls,
+    )
     return rec
 
 
@@ -174,11 +195,19 @@ def run(data_room, extractor, judge, only=None, tracker=None):
     (out / "gates").mkdir(parents=True)
     for r in results:
         (out / "gates" / f"{r['gate']}.json").write_text(json.dumps(r, indent=2))
-    summary = {"fund": room.name, "run": stamp, "extractor": extractor, "judge": judge,
-               "disposition": disposition, "flags": flags,
-               "seconds": round(time.time() - tr.t0, 2),
-               "gates": {r["gate"]: {"result": r["result"], "review": r.get("review"),
-                                     "min_confidence": r.get("min_confidence")} for r in results}}
+    summary = {
+        "fund": room.name,
+        "run": stamp,
+        "extractor": extractor,
+        "judge": judge,
+        "disposition": disposition,
+        "flags": flags,
+        "seconds": round(time.time() - tr.t0, 2),
+        "gates": {
+            r["gate"]: {"result": r["result"], "review": r.get("review"), "min_confidence": r.get("min_confidence")}
+            for r in results
+        },
+    }
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     (out / "summary.md").write_text(render_md(summary, results))
     with (ROOT / "runs" / "index.jsonl").open("a") as fh:
@@ -187,9 +216,16 @@ def run(data_room, extractor, judge, only=None, tracker=None):
 
 
 def render_md(summary, results):
-    L = [f"# Screen run: {summary['fund']}", "",
-         f"Run {summary['run']}. Extractor `{summary['extractor']}`, judge `{summary['judge']}`.", "",
-         f"**{summary['disposition']}**", "", "| Gate | Result | Analyst review | Evidence |", "|---|---|---|---|"]
+    L = [
+        f"# Screen run: {summary['fund']}",
+        "",
+        f"Run {summary['run']}. Extractor `{summary['extractor']}`, judge `{summary['judge']}`.",
+        "",
+        f"**{summary['disposition']}**",
+        "",
+        "| Gate | Result | Analyst review | Evidence |",
+        "|---|---|---|---|",
+    ]
     for r in results:
         ev = "; ".join(f"{f['file'].split('/')[-1]} p.{f['page']}" for f in r.get("brief", {}).get("facts", [])[:4])
         L.append(f"| {r['gate']} | {r['result']} | {'yes' if r.get('review') else 'no'} | {ev or 'none'} |")

@@ -1,6 +1,7 @@
 import { $, $$, cached, esc, n, ago, stampDate, gateStrip, dispChip, dispShort, pipeChip, PIPE_ORDER, splitName, initials, empty, skeleton, downloadCSV, q } from '../lib.js';
 import { setCrumbs, screenDialog, jobs, onJobs } from '../app.js';
 
+/** @type {[string, string, (f: any) => any][]} */
 const FILTERS = [
   ['all', 'All', () => true],
   ['unscreened', 'Not screened', f => !f.latest],

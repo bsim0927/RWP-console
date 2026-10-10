@@ -1,4 +1,5 @@
 """resolve -> derive -> reduce_gates: turning judge probabilities into a disposition."""
+
 import unittest
 
 import yaml
@@ -96,10 +97,14 @@ class Reduce(unittest.TestCase):
         self.assertTrue(reduce_gates(POLICY, self.r("Pass", "Not yet run"))[0].startswith("Under review (gates"))
 
     def test_review_outranks_everything(self):
-        self.assertTrue(reduce_gates(POLICY, self.r("Fail", "Incomplete", review=(0,)))[0].startswith("Under review (analyst"))
+        self.assertTrue(
+            reduce_gates(POLICY, self.r("Fail", "Incomplete", review=(0,)))[0].startswith("Under review (analyst")
+        )
 
     def test_no_rule_matches(self):
-        self.assertEqual(reduce_gates({"rules": [{"when": "any_fail", "disposition": "X"}]}, self.r("Pass"))[0], "Under review")
+        self.assertEqual(
+            reduce_gates({"rules": [{"when": "any_fail", "disposition": "X"}]}, self.r("Pass"))[0], "Under review"
+        )
 
 
 if __name__ == "__main__":

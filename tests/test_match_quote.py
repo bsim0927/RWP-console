@@ -1,15 +1,18 @@
 """Quote verification. Every case runs against each implementation in IMPLS, so the Rust
 port is held to exactly the Python behaviour."""
+
 import json
 import random
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sg import dataroom
 from sg.dataroom import DataRoom
 
-IMPLS = {"python": dataroom.match_quote_py}
+IMPLS: dict[str, Callable[[str, str], str | None]] = {"python": dataroom.match_quote_py}
 if dataroom.match_quote_rs:
     IMPLS["rust"] = dataroom.match_quote_rs
 
@@ -18,8 +21,12 @@ def filler(n):
     return " ".join(f"x{i}" for i in range(n))
 
 
-class MatchQuoteCases:
-    match = None  # set by the per-implementation subclasses below
+# A mixin, so unittest does not collect it on its own. mypy checks it as a TestCase.
+_Base = unittest.TestCase if TYPE_CHECKING else object
+
+
+class MatchQuoteCases(_Base):  # type: ignore[valid-type,misc]
+    match: Callable[[str, str], str | None]  # set by the per-implementation subclasses below
 
     def m(self, text, quote):
         return type(self).match(text, quote)
@@ -95,7 +102,9 @@ class MatchQuoteCases:
         self.assertEqual(self.m(page, "alpha bravo charlie delta echo"), "reflowed")
 
     def test_match_at_end_of_page(self):
-        self.assertEqual(self.m(f"{filler(3)} alpha bravo x charlie delta echo", "alpha bravo charlie delta echo"), "reflowed")
+        self.assertEqual(
+            self.m(f"{filler(3)} alpha bravo x charlie delta echo", "alpha bravo charlie delta echo"), "reflowed"
+        )
 
     def test_dollar_percent_and_decimal_are_word_characters(self):
         # "$2.5" and "2.5" are different words, so this quote does not reflow.
@@ -113,11 +122,11 @@ class MatchQuoteCases:
         page = "w0 w1 f f w1 f f f f f w2 " + " ".join(f"w{i} f" for i in range(3, 10))
         self.assertIsNone(self.m(page, q))
 
-
     def test_whitespace_only_quote(self):
         # norm("  ") is "", and "" is in every page, so this must be caught first.
         self.assertIsNone(self.m("any page at all", "   \n\t"))
         self.assertIsNone(self.m("", " "))
+
 
 for _name, _fn in IMPLS.items():
     _cls = type(f"MatchQuote_{_name}", (MatchQuoteCases, unittest.TestCase), {"match": staticmethod(_fn)})
@@ -138,11 +147,11 @@ class Parity(unittest.TestCase):
             pw = page.split()
             if pw and rng.random() < 0.7:
                 i = rng.randrange(len(pw))
-                span = pw[i:i + rng.randint(1, 15)]
-                quote = [w for w in span if rng.random() > 0.25]  # drop words to make gaps
+                span = pw[i : i + rng.randint(1, 15)]
+                kept = [w for w in span if rng.random() > 0.25]  # drop words to make gaps
                 if rng.random() < 0.3:
-                    quote.insert(rng.randint(0, len(quote)), rng.choice(self.VOCAB))
-                quote = " ".join(quote)
+                    kept.insert(rng.randint(0, len(kept)), rng.choice(self.VOCAB))
+                quote = " ".join(kept)
             else:
                 quote = " ".join(rng.choice(self.VOCAB) for _ in range(rng.randint(0, 10)))
             with self.subTest(page=page, quote=quote):
@@ -200,10 +209,12 @@ class AgainstBruteForce(unittest.TestCase):
                     self.assertEqual(fn(page, quote), want)
         self.assertGreater(hits, 500)  # the generator must actually exercise reflowed matches
 
+
 class Dispatch(unittest.TestCase):
     def test_lone_surrogate_falls_back_to_python(self):
         page = "bad \ud800 text: the minimum investment is $250,000"
         self.assertEqual(dataroom.match_quote(page, "minimum investment is $250,000"), "exact")
+
 
 class DataRoomVerify(unittest.TestCase):
     def setUp(self):

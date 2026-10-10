@@ -1,0 +1,29 @@
+# Once Vercel is connected, its GitHub integration reports each deployment. This runs the data-agnostic
+# @smoke recipes against the preview URL, so a broken deploy is caught before merge. Dormant until then.
+name: Preview smoke
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: github.event.deployment_status.state == 'success' && github.event.deployment.environment != 'Production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version-file: .nvmrc, cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test --grep @smoke --project=desktop
+        env:
+          E2E_BASE_URL: ${{ github.event.deployment_status.environment_url }}
+          # Protected previews: create a Vercel "Protection Bypass for Automation" secret.
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with: { name: preview-smoke-report, path: e2e/.report/, retention-days: 14 }

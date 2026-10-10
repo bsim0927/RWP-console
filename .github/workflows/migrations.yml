@@ -1,0 +1,100 @@
+# Database migration consistency. Static hygiene runs on every PR; the Postgres replay runs whenever
+# supabase/ changes (and on main), so it costs nothing on PRs that do not touch the database.
+# `Migrations OK` is the required status check.
+name: Migrations
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * *" # nightly: catch drift between main's migrations and the live project
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migrations-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  hygiene:
+    name: Naming, ordering, append-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      db_changed: ${{ steps.changes.outputs.db_changed }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - id: changes
+        run: |
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "db_changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "origin/${{ github.base_ref }}...HEAD" -- supabase/; then
+            echo "db_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "db_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Static checks
+        run: scripts/check-migrations.sh ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+
+  replay:
+    name: Replay from scratch, lint, schema drift
+    needs: hygiene
+    if: needs.hygiene.outputs.db_changed == 'true' && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version-file: .nvmrc, cache: npm }
+      - run: npm ci
+      - run: make db-replay
+      - name: Migrations are idempotent across a second reset
+        run: npx supabase db reset --local
+      - if: always()
+        run: make db-stop
+
+  remote-drift:
+    name: Live project matches main
+    needs: hygiene
+    # Runs once a Supabase project is linked: set repo variable SUPABASE_PROJECT_REF and secrets
+    # SUPABASE_ACCESS_TOKEN + SUPABASE_DB_PASSWORD.
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && vars.SUPABASE_PROJECT_REF != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version-file: .nvmrc, cache: npm }
+      - run: npm ci
+      - run: npx supabase link --project-ref "${{ vars.SUPABASE_PROJECT_REF }}"
+      - name: Every migration in the repo is applied remotely, and nothing else is
+        run: |
+          npx supabase migration list --linked --output-format json > migrations.json
+          # Each row is {local, remote, time}; a version present on only one side means divergence.
+          jq -e '.migrations | type == "array"' migrations.json > /dev/null \
+            || { echo "::error::Unrecognised 'supabase migration list' output; update this parser"; cat migrations.json; exit 1; }
+          diverged=$(jq -r '.migrations[] | select(.local != .remote) | "local=\(.local) remote=\(.remote)"' migrations.json)
+          if [[ -n "$diverged" ]]; then
+            echo "::error::Remote migration history differs from supabase/migrations on main"; echo "$diverged"; exit 1
+          fi
+          echo "$(jq '.migrations | length' migrations.json) migration(s), identical locally and remotely"
+      - name: Remote schema has no changes made outside migrations
+        run: |
+          out=$(npx supabase db diff --linked --schema public | grep -vE '^\s*(--.*)?$' || true)
+          if [[ -n "$out" ]]; then echo "::error::Schema drift on the live project"; echo "$out"; exit 1; fi
+
+  migrations-ok:
+    name: Migrations OK
+    if: always()
+    needs: [hygiene, replay]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo '${{ toJSON(needs) }}' | jq -e 'to_entries | all(.value.result == "success" or .value.result == "skipped")'

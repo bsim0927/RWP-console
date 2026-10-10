@@ -59,11 +59,8 @@ pub fn match_quote(text: &str, quote: &str) -> Option<Match> {
         // nearest, matters when a word repeats: a later "the" may be the one that reaches on.
         let mut reach = vec![start];
         for want in &q[1..] {
-            let mut next: Vec<usize> = reach
-                .iter()
-                .flat_map(|&p| p + 1..(p + 1 + MAX_GAP).min(t.len()))
-                .filter(|&k| t[k] == *want)
-                .collect();
+            let mut next: Vec<usize> =
+                reach.iter().flat_map(|&p| p + 1..(p + 1 + MAX_GAP).min(t.len())).filter(|&k| t[k] == *want).collect();
             next.sort_unstable();
             next.dedup();
             reach = next;
@@ -71,10 +68,10 @@ pub fn match_quote(text: &str, quote: &str) -> Option<Match> {
                 break;
             }
         }
-        if let Some(&end) = reach.first() {
-            if (end - start + 1) as f64 <= max_span {
-                return Some(Match::Reflowed);
-            }
+        if let Some(&end) = reach.first()
+            && (end - start + 1) as f64 <= max_span
+        {
+            return Some(Match::Reflowed);
         }
     }
     None

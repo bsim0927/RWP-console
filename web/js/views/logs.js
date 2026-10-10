@@ -1,8 +1,9 @@
 // Agent monitor: every screen run as a trace of model calls, with runtimes, token usage and outputs.
-import { $, $$, api, esc, n, pct, ago, fmtDT, fmtTime, stampDate, gateName, sortGates, resultChip, dispChip, stackBars, dotStrip, legend, empty, skeleton, downloadCSV, STEPS, waterfall } from '../lib.js';
+import { $, $$, api, esc, n, pct, ago, fmtDT, fmtTime, stampDate, gateName, sortGates, resultChip, dispChip, stackBars, dotStrip, legend, empty, skeleton, downloadCSV, waterfall } from '../lib.js';
 import { setCrumbs } from '../app.js';
 
 const STEP_COL = { extract: 'var(--st-extract)', judge: 'var(--st-judge)' };
+/** @type {[string, string, number][]} */
 const RANGES = [['24h', 'Last 24 hours', 864e2], ['7d', 'Last 7 days', 6048e2], ['all', 'All time', Infinity]];
 const median = a => { const s = a.filter(v => v != null).sort((x, y) => x - y); return s.length ? (s.length % 2 ? s[s.length >> 1] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : null; };
 const p95 = a => { const s = a.filter(v => v != null).sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(s.length * 0.95))] : null; };
@@ -126,7 +127,7 @@ export async function render(el, r) {
       $$('#cs button', box).forEach(b => b.addEventListener('click', () => { st.step = b.dataset.v; $$('#cs button', box).forEach(x => x.classList.toggle('on', x === b)); draw(); }));
       $$('#cst button', box).forEach(b => b.addEventListener('click', () => { st.status = b.dataset.v; $$('#cst button', box).forEach(x => x.classList.toggle('on', x === b)); draw(); }));
       $('#cq', box).addEventListener('sl-input', e => { st.text = e.target.value; draw(); });
-      $('#ccsv', box).addEventListener('click', () => downloadCSV('model-calls.csv', box._list.map(({ output, ...c }) => c)));
+      $('#ccsv', box).addEventListener('click', () => downloadCSV('model-calls.csv', box._list.map(({ output: _output, ...c }) => c)));
     }
     box._list = list;
     $('#cc', box).textContent = `${list.length} of ${calls.length} calls`;
