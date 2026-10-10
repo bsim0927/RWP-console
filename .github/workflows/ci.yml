@@ -1,0 +1,139 @@
+# Mirrors the pre-commit hooks job for job: each step calls the same `make` target the hooks use,
+# from the same lockfiles. `CI OK` at the bottom is the single required status check for `main`.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FORCE_COLOR: "1"
+  UV_FROZEN: "1"
+
+jobs:
+  hygiene:
+    name: Repo hygiene and secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with: { enable-cache: true }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      # The generic hooks only; the project checks run as their own jobs below.
+      - run: uv run pre-commit run --all-files --show-diff-on-failure
+        env:
+          SKIP: ruff-check,ruff-format,mypy,pytest,eslint,tsc,vitest,rust,migrations,playwright
+
+  backend:
+    name: Backend lint, types, tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with: { enable-cache: true, python-version: "${{ matrix.python }}" }
+      - run: uv sync
+      - run: make lint-py
+      - run: make typecheck-py
+      - run: uv run pytest -q --cov --cov-report=term --cov-report=xml:coverage/python.xml --junitxml=coverage/pytest.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-coverage-py${{ matrix.python }}
+          path: coverage/
+          retention-days: 14
+
+  frontend:
+    name: Frontend lint, types, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version-file: .nvmrc, cache: npm }
+      - run: npm ci
+      - run: make lint-js
+      - run: make typecheck-js
+      - run: npx vitest run --coverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-coverage
+          path: coverage/js/
+          retention-days: 14
+
+  rust:
+    name: Rust quote matcher (fmt, clippy, tests, parity with Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "rustfmt, clippy" }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: rust/verify }
+      - uses: astral-sh/setup-uv@v6
+        with: { enable-cache: true }
+      - run: uv sync
+      - run: make lint-rust
+      - run: make test-rust
+      - run: make test-parity
+
+  e2e:
+    name: Playwright recipes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with: { enable-cache: true }
+      - uses: actions/setup-node@v5
+        with: { node-version-file: .nvmrc, cache: npm }
+      - run: uv sync
+      - run: npm ci
+      - name: Cache browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npx playwright install --with-deps chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+      - run: npx playwright install-deps chromium
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+      - run: make e2e
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: |
+            e2e/.report/
+            e2e/.results/
+          retention-days: 14
+
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs: [hygiene, backend, frontend, rust, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All required jobs passed
+        run: |
+          echo '${{ toJSON(needs) }}' | jq -e 'to_entries | all(.value.result == "success")'

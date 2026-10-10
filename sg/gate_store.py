@@ -43,7 +43,8 @@ def _path(name):
 
 def validate(g, own_file=None):
     """Return (errors, warnings) for a parsed gate."""
-    err, warn = [], []
+    err: list[str] = []
+    warn: list[str] = []
     if not isinstance(g, dict):
         return ["the gate must be a YAML mapping"], warn
     gid = g.get("id")

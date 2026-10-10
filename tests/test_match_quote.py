@@ -5,12 +5,14 @@ import json
 import random
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sg import dataroom
 from sg.dataroom import DataRoom
 
-IMPLS = {"python": dataroom.match_quote_py}
+IMPLS: dict[str, Callable[[str, str], str | None]] = {"python": dataroom.match_quote_py}
 if dataroom.match_quote_rs:
     IMPLS["rust"] = dataroom.match_quote_rs
 
@@ -19,8 +21,12 @@ def filler(n):
     return " ".join(f"x{i}" for i in range(n))
 
 
-class MatchQuoteCases:
-    match = None  # set by the per-implementation subclasses below
+# A mixin, so unittest does not collect it on its own. mypy checks it as a TestCase.
+_Base = unittest.TestCase if TYPE_CHECKING else object
+
+
+class MatchQuoteCases(_Base):  # type: ignore[valid-type,misc]
+    match: Callable[[str, str], str | None]  # set by the per-implementation subclasses below
 
     def m(self, text, quote):
         return type(self).match(text, quote)
@@ -142,10 +148,10 @@ class Parity(unittest.TestCase):
             if pw and rng.random() < 0.7:
                 i = rng.randrange(len(pw))
                 span = pw[i : i + rng.randint(1, 15)]
-                quote = [w for w in span if rng.random() > 0.25]  # drop words to make gaps
+                kept = [w for w in span if rng.random() > 0.25]  # drop words to make gaps
                 if rng.random() < 0.3:
-                    quote.insert(rng.randint(0, len(quote)), rng.choice(self.VOCAB))
-                quote = " ".join(quote)
+                    kept.insert(rng.randint(0, len(kept)), rng.choice(self.VOCAB))
+                quote = " ".join(kept)
             else:
                 quote = " ".join(rng.choice(self.VOCAB) for _ in range(rng.randint(0, 10)))
             with self.subTest(page=page, quote=quote):

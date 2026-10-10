@@ -1,4 +1,4 @@
-import { cached, esc, n, pct, ago, stampDate, gateStrip, dispChip, dispTone, resultChip, gateName, sortGates, hbars, legend, PIPE_ORDER, pipeChip, splitName, empty, skeleton, GATE_ORDER, resultTone, RESULT_KEYS, toneVar } from '../lib.js';
+import { cached, esc, n, pct, ago, stampDate, gateStrip, dispChip, gateName, hbars, legend, PIPE_ORDER, pipeChip, splitName, empty, skeleton, GATE_ORDER, resultTone, RESULT_KEYS, toneVar } from '../lib.js';
 import { setCrumbs } from '../app.js';
 
 export async function render(el) {
@@ -29,7 +29,7 @@ export async function render(el) {
   // Intake aging from "Material on file" dates.
   const today = new Date();
   const buckets = [['Under 2 weeks', 0, 14], ['2 to 4 weeks', 14, 30], ['1 to 2 months', 30, 60], ['Over 2 months', 60, 1e9]];
-  const ages = pipeRows.map(r => r['Material on file']).filter(d => /^\d{4}-\d\d-\d\d$/.test(d || '')).map(d => (today - new Date(d)) / 864e5);
+  const ages = pipeRows.map(r => r['Material on file']).filter(d => /^\d{4}-\d\d-\d\d$/.test(d || '')).map(d => (today.getTime() - new Date(d).getTime()) / 864e5);
   const aging = buckets.map(([label, lo, hi]) => { const c = ages.filter(a => a >= lo && a < hi).length; return { label, segs: [{ v: c, color: 'var(--c1)', tip: `${label}: ${c} intake rows` }], value: n(c) }; });
 
   const attention = [

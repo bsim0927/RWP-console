@@ -14,6 +14,8 @@ gates and policy. Read-only except Run screen and Rebuild catalog. The previous 
 Web UI is plain ES modules in web/js, no build step. Components are Shoelace 2.20 (MIT), vendored in web/vendor
 with Inter and JetBrains Mono, so the page makes no external requests.
 
-Tests: `python3 -m unittest discover -s tests -t .` (standard library only). Quote verification has an optional
-Rust build: `./build-rust.sh` compiles rust/verify into sg/_verify.abi3.so and runs the tests against both
-implementations. Without it, sg/dataroom.py uses the Python one.
+Tests: `make check` runs linters, type checks and unit tests; `make e2e` runs the Playwright recipes.
+Run `make setup` once to install the tooling and git hooks. See CONTRIBUTING.md for every quality gate and
+how pre-commit and CI mirror each other. Quote verification has an optional Rust build: `./build-rust.sh`
+compiles rust/verify into sg/_verify.abi3.so and runs the tests against both implementations. Without it,
+sg/dataroom.py uses the Python one.

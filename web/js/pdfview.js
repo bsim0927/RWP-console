@@ -28,6 +28,7 @@ function locate(items, quote) {
   return null;
 }
 
+/** @param {HTMLElement} box @param {string} url @param {{ page?: number, quote?: string }} [opts] */
 export async function pdfViewer(box, url, { page = 1, quote } = {}) {
   box.innerHTML = `<div class="pdfv"><div class="pdf-bar">
       <button class="ghost-btn sm" data-a="prev" title="Previous page"><sl-icon name="chevron-up"></sl-icon></button>
@@ -63,7 +64,7 @@ export async function pdfViewer(box, url, { page = 1, quote } = {}) {
     const s = scaleNow();
     box.querySelector('[data-z]').textContent = zoom ? Math.round(zoom * 100) + '%' : 'fit';
     pagesEl.innerHTML = Array.from({ length: doc.numPages }, (_, i) => `<div class="pdf-page" data-p="${i + 1}" style="width:${base.width * s}px;height:${base.height * s}px"><span class="pdf-num">${i + 1}</span></div>`).join('');
-    observer = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) draw(+e.target.dataset.p); }), { root: null, rootMargin: '600px 0px' });
+    observer = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) draw(+/** @type {HTMLElement} */ (e.target).dataset.p); }), { root: null, rootMargin: '600px 0px' });
     pagesEl.querySelectorAll('.pdf-page').forEach(d => observer.observe(d));
     if (target) requestAnimationFrame(() => goTo(target, false));
   }

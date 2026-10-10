@@ -1,0 +1,2 @@
+-- Local and CI seed data, loaded by `supabase db reset` after migrations. Never runs in production.
+-- Keep it synthetic: no real fund names or documents.

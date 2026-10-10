@@ -17,12 +17,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sg.catalog import build as build_catalog  # noqa: E402
 from sg import gate_store, monitor  # noqa: E402
+from sg.catalog import build as build_catalog  # noqa: E402
 from sg.pipeline import ROOT, Tracker, load_gates, run  # noqa: E402
 
-JOBS = {}
-LOG = collections.deque(maxlen=1000)  # in-memory event log, newest last
+JOBS: dict[str, dict] = {}
+LOG: collections.deque[dict] = collections.deque(maxlen=1000)  # in-memory event log, newest last
 WEB = ROOT / "web"
 RUNS = ROOT / "runs"
 
@@ -102,7 +102,7 @@ def real_candidates(v):
 
 
 def merged_listing(v):
-    entries = {}
+    entries: dict[str, dict] = {}
     for d in real_candidates(v):
         if not d.is_dir():
             continue
@@ -138,7 +138,9 @@ def parse_pipeline():
     if not src:
         return {"source": None, "updated": None, "sections": []}
     text = src.read_text(errors="replace")
-    sections, cur, header = [], None, None
+    sections: list[dict] = []
+    cur: dict | None = None
+    header: list[str] | None = None
     for line in text.splitlines():
         if line.startswith("## "):
             cur, header = {"title": line[3:].strip(), "rows": []}, None
@@ -148,7 +150,7 @@ def parse_pipeline():
             if header is None:
                 header = cells
             elif not all(set(c) <= set("-: ") for c in cells):
-                cur["rows"].append(dict(zip(header, cells)))
+                cur["rows"].append(dict(zip(header, cells, strict=False)))
         else:
             header = None
     upd = re.search(r"Last updated:\s*(\S+)", text)
@@ -175,7 +177,7 @@ def match_pipeline(name, rows):
 
 # ---------- full-text search over indexed pages (lazy, mtime-cached) ----------
 
-_PAGES = {}
+_PAGES: dict[Path, tuple[float, list[dict]]] = {}
 
 
 def room_pages(folder):
@@ -218,7 +220,7 @@ def search(q, rooms, limit=80):
 
 
 def all_runs():
-    out = []
+    out: list[dict] = []
     if not RUNS.exists():
         return out
     for fdir in sorted(p for p in RUNS.iterdir() if p.is_dir()):

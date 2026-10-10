@@ -12,3 +12,16 @@ runs/
 # Rust build output (./build-rust.sh)
 rust/*/target/
 sg/*.so
+
+# Tooling
+node_modules/
+coverage/
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Playwright: fixture workspace, results, report
+e2e/.workspace/
+e2e/.results/
+e2e/.report/

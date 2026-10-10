@@ -12,8 +12,8 @@ from pathlib import Path
 
 # Call tracing. The pipeline sets CTX (fund, gate, step) and TRACE (a list) per gate; every model call
 # appends one record there and to runs/calls.jsonl, so failed runs still leave a trail.
-CTX = contextvars.ContextVar("sg_ctx", default={})
-TRACE = contextvars.ContextVar("sg_trace", default=None)
+CTX: contextvars.ContextVar[dict] = contextvars.ContextVar("sg_ctx", default={})  # noqa: B039  read-only, replaced via set()
+TRACE: contextvars.ContextVar[list | None] = contextvars.ContextVar("sg_trace", default=None)
 CALL_LOG = Path(__file__).resolve().parent.parent / "runs" / "calls.jsonl"
 _log_lock = threading.Lock()
 
@@ -78,7 +78,7 @@ def call_claude_tool(system, user, tool_name, schema):
     )
     t0, chars = time.time(), len(body["system"]) + len(user)
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310  fixed https URL
             resp = json.load(r)
     except urllib.error.HTTPError as e:
         err = f"Anthropic API HTTP {e.code}: {e.read().decode()[:500]}"

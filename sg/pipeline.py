@@ -10,9 +10,9 @@ from pathlib import Path
 
 import yaml
 
+from .catalog import load as load_catalog
 from .dataroom import DataRoom
 from .extractors import EXTRACTORS
-from .catalog import load as load_catalog
 from .judges import JUDGES
 from .llm import CTX, TRACE
 from .route import route
@@ -27,7 +27,7 @@ def load_gates(only=None):
 
 def code_checks(gate, facts):
     """Deterministic numbers. Jev is weak on arithmetic, so it never does any."""
-    ctx = {"total_pct": None}
+    ctx: dict[str, float | None] = {"total_pct": None}
     recurring = {f["name"] for f in gate["extractor"]["fields"] if f.get("recurring")}
     vals = []
     for f in facts:
@@ -97,7 +97,7 @@ def run_gate(gate, room, extractor, judge, tr, catalog=None):
         )
         return rec
     ex = gate["extractor"]
-    calls = []
+    calls: list[dict] = []
     TRACE.set(calls)  # this runs in the gate's own worker thread, so the context is per gate
     ctx = {"fund": room.name, "gate": gate["id"]}
     e = tr.begin(gate["id"], "retrieve")
@@ -123,7 +123,8 @@ def run_gate(gate, room, extractor, judge, tr, catalog=None):
     raw = EXTRACTORS[extractor](gate, room, pages)
     tr.end(e, f"{len(raw)} facts proposed")
     e = tr.begin(gate["id"], "verify")
-    facts, rejected = [], []
+    facts: list[dict] = []
+    rejected: list[dict] = []
     for f in raw:
         f["match"] = room.verify_quote(f["file"], f["page"], f["quote"])
         (facts if f["match"] else rejected).append(f)

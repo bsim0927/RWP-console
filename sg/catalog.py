@@ -185,7 +185,7 @@ def bookmarks(pdf):
 
 def word_shingles(pages, k=8):
     w = norm(" ".join(p["text"] for p in pages)).split()
-    return {hashlib.md5(" ".join(w[i : i + k]).encode()).digest() for i in range(len(w) - k)}
+    return {hashlib.md5(" ".join(w[i : i + k]).encode(), usedforsecurity=False).digest() for i in range(len(w) - k)}
 
 
 def containment(a, b):
@@ -218,7 +218,7 @@ def build(folder):
         sections, structure = build_sections(pages, marks)
         docs.append(
             {
-                "doc_id": hashlib.md5(path.encode()).hexdigest()[:10],
+                "doc_id": hashlib.md5(path.encode(), usedforsecurity=False).hexdigest()[:10],
                 "path": path,
                 "name": path.split("/")[-1],
                 "folder": "/".join(path.split("/")[:-1]),
@@ -345,7 +345,7 @@ def build(folder):
 def summarize(name, docs):
     pages = lambda ds: sum(d["pages"] for d in ds)
     canon = [d for d in docs if d["canonical"]]
-    tiers = defaultdict(lambda: {"files": 0, "pages": 0})
+    tiers: defaultdict[str, dict[str, int]] = defaultdict(lambda: {"files": 0, "pages": 0})
     for d in canon:
         tiers[d["tier"]]["files"] += 1
         tiers[d["tier"]]["pages"] += d["pages"]

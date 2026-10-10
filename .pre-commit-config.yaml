@@ -1,0 +1,115 @@
+# Git hooks. Install with `make hooks` (or `make setup`).
+#
+# Every tool runs from the project's own lockfiles (uv.lock, package-lock.json), with the same config
+# CI uses, so hooks and CI cannot disagree about versions or rules. CI runs this file too
+# (`pre-commit run --all-files`, see .github/workflows/ci.yml) for the hygiene hooks below.
+#
+# pre-commit stage: linters, formatters, type checks, unit tests  (seconds)
+# pre-push stage:   Playwright recipes                             (about a minute)
+# Skip one hook in an emergency: SKIP=mypy git commit ...  CI still runs it.
+
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+exclude: ^(web/vendor/|uv\.lock$|package-lock\.json$|rust/verify/Cargo\.lock$)
+
+repos:
+  # ---------- repo hygiene ----------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+        exclude: ^jsconfig\.json$ # JSON with comments
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: detect-private-key
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  # ---------- project checks (same tools and config as `make check`) ----------
+  - repo: local
+    hooks:
+      - id: actionlint
+        name: actionlint (github workflows)
+        entry: uvx --from actionlint-py==1.7.12.25 actionlint
+        language: system
+        files: ^\.github/workflows/
+      - id: shellcheck
+        name: shellcheck
+        entry: uvx --from shellcheck-py==0.11.0.1 shellcheck
+        language: system
+        types: [shell]
+
+      - id: ruff-check
+        name: ruff check (python lint)
+        entry: uv run --frozen ruff check --fix --exit-non-zero-on-fix
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-format
+        name: ruff format (python)
+        entry: uv run --frozen ruff format
+        language: system
+        types_or: [python, pyi]
+      - id: mypy
+        name: mypy (python types)
+        entry: uv run --frozen mypy
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+      - id: pytest
+        name: pytest (backend tests)
+        entry: uv run --frozen pytest -q -x
+        language: system
+        files: ^(sg/|tests/|server\.py|screen\.py|catalog\.py|gates/|policy\.yaml|pyproject\.toml)
+        pass_filenames: false
+
+      - id: eslint
+        name: eslint (frontend lint)
+        entry: npx --no-install eslint --fix --max-warnings=0
+        language: system
+        files: \.(js|mjs)$
+      - id: tsc
+        name: tsc --checkJs (frontend types)
+        entry: npx --no-install tsc -p jsconfig.json
+        language: system
+        files: ^(web/js/|jsconfig\.json)
+        pass_filenames: false
+      - id: vitest
+        name: vitest (frontend tests)
+        entry: npx --no-install vitest run
+        language: system
+        files: ^(web/js/|tests/js/|vitest\.config\.js)
+        pass_filenames: false
+
+      - id: rust
+        name: rustfmt + clippy
+        entry: make --no-print-directory lint-rust
+        language: system
+        files: ^rust/
+        pass_filenames: false
+
+      - id: migrations
+        name: supabase migration hygiene
+        entry: scripts/check-migrations.sh
+        language: system
+        files: ^supabase/
+        pass_filenames: false
+
+      - id: playwright
+        name: playwright recipes (desktop)
+        entry: npx --no-install playwright test --project=desktop
+        language: system
+        files: ^(web/|server\.py|sg/|gates/|policy\.yaml|e2e/|playwright\.config\.js)
+        pass_filenames: false
+        stages: [pre-push]

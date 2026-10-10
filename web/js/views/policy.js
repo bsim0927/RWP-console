@@ -1,5 +1,5 @@
 // Gates and policy: read the policy, and add, edit, reorder, remove or restore gates.
-import { $, $$, api, cached, bust, esc, gateName, gateColor, setGateOrder, skeleton, empty, toast, fmtDT, stampDate } from '../lib.js';
+import { $, $$, api, bust, esc, gateName, gateColor, setGateOrder, skeleton, toast, fmtDT, stampDate } from '../lib.js';
 import { setCrumbs } from '../app.js';
 
 const WHEN = { any_review: 'Any gate needs analyst review', any_incomplete: 'Any gate is incomplete or not yet run', any_fail: 'Any gate is not met', otherwise: 'Otherwise' };

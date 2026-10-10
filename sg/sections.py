@@ -50,9 +50,14 @@ def toc_entries(pages, scan=8):
             printed = m.group("p1") or m.group("p2")
             # Plain "Title 12" lines only count when the title carries a structural marker,
             # otherwise every sentence ending in a number would qualify.
-            if not m.group("p1") and m.group("p2") and not MARKER.match(title) and "." not in line[-40:]:
-                if not re.match(rf"^({ROMAN}|\d+)\.\s", title):
-                    continue
+            if (
+                not m.group("p1")
+                and m.group("p2")
+                and not MARKER.match(title)
+                and "." not in line[-40:]
+                and not re.match(rf"^({ROMAN}|\d+)\.\s", title)
+            ):
+                continue
             if len(title) < 3 or title.lower() in ("table of contents", "contents", "page"):
                 continue
             found.append({"title": title, "printed": int(printed) if printed else None})
@@ -77,7 +82,7 @@ def locate(entries, pages, after):
     for p in pages:
         if p["page"] <= after:
             continue
-        lines = [norm(l) for l in p["text"].splitlines() if l.strip()]
+        lines = [norm(ln) for ln in p["text"].splitlines() if ln.strip()]
         lines_by_page.append((p["page"], lines))
     floor = after + 1
     for e in entries:
@@ -192,7 +197,7 @@ def build_sections(pages, marks):
     if len(terms) < 4:
         secs = [s for s in secs if s["source"] != "term"]
     close(secs, n)
-    covered = set()
+    covered: set[int] = set()
     for s in secs:
         covered.update(range(s["start"], s["end"] + 1))
     return secs, {

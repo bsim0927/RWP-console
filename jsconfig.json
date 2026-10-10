@@ -1,0 +1,17 @@
+{
+  // Type-checks the plain JS frontend from its JSDoc and inference. Nothing is emitted.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["web/js/**/*.js", "web/js/env.d.ts"],
+  "exclude": ["web/js/**/*.test.js"]
+}

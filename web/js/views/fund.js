@@ -1,6 +1,6 @@
 import {
   $, $$, api, cached, bust, esc, n, pct, ago, fmtDT, stampDate, gateName, sortGates, resultChip, resultTone, resultIcon, dispChip, dispTone, dispIcon, dispShort, dispNote,
-  pipeChip, splitName, initials, waterfall, stepMatrix, lineChart, legend, hbars, markdown, openPreview, empty, skeleton, TIERS, TIER_COL, gateColor, GATE_ORDER, toast, fileIcon,
+  pipeChip, splitName, initials, waterfall, stepMatrix, lineChart, legend, hbars, markdown, openPreview, empty, skeleton, TIERS, TIER_COL, gateColor, GATE_ORDER, toast,
 } from '../lib.js';
 import { setCrumbs, screenDialog, jobs, onJobs } from '../app.js';
 import { browser } from './files.js';

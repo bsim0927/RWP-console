@@ -11,6 +11,7 @@ set -euo pipefail
 # ──────────────────────────────────────────────────────────────────────────
 # Wizard library — delightful, consistent UX. Identical across every wizard.
 # ──────────────────────────────────────────────────────────────────────────
+# shellcheck disable=SC2034  # shared wizard palette; not every wizard uses every colour
 
 if [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && [[ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]]; then
   BOLD=$(tput bold); DIM=$(tput dim); RESET=$(tput sgr0)

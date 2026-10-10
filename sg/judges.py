@@ -43,7 +43,7 @@ def claude_judge(gate, brief, questions):
 def brief_state(gate, brief):
     """Structured state for Jev: named fields so questions can point at them.
     Quotes only. File and page stay in our log, they are noise to the judge."""
-    facts = {}
+    facts: dict[str, list[str]] = {}
     for f in brief["facts"]:
         facts.setdefault(f["field"], []).append(f["quote"])
     return {
@@ -89,7 +89,7 @@ def jev_judge(gate, brief, questions):
     model, t0 = os.environ.get("SG_JEV_MODEL", "jev-latest"), time.time()
     for attempt in range(4):
         try:
-            with urllib.request.urlopen(req, timeout=60) as r:
+            with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310  fixed https URL
                 resp = json.load(r)
             break
         except urllib.error.HTTPError as e:
