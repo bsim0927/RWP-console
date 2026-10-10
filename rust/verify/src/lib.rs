@@ -42,10 +42,11 @@ fn words(s: &str) -> Vec<String> {
 }
 
 pub fn match_quote(text: &str, quote: &str) -> Option<Match> {
-    if quote.is_empty() {
+    let normed = norm(quote);
+    if normed.is_empty() {
         return None;
     }
-    if norm(text).contains(&norm(quote)) {
+    if norm(text).contains(&normed) {
         return Some(Match::Exact);
     }
     let (q, t) = (words(quote), words(text));
@@ -53,17 +54,27 @@ pub fn match_quote(text: &str, quote: &str) -> Option<Match> {
         return None;
     }
     let max_span = q.len() as f64 * 1.3 + 4.0;
-    'start: for start in (0..t.len()).filter(|&i| t[i] == q[0]) {
-        let mut pos = start;
+    for start in (0..t.len()).filter(|&i| t[i] == q[0]) {
+        // Every position the current quote word can sit at. Keeping all of them, not just the
+        // nearest, matters when a word repeats: a later "the" may be the one that reaches on.
+        let mut reach = vec![start];
         for want in &q[1..] {
-            // Nearest next occurrence within the gap, as the Python does.
-            match (pos + 1..(pos + 1 + MAX_GAP).min(t.len())).find(|&k| t[k] == *want) {
-                Some(k) => pos = k,
-                None => continue 'start,
+            let mut next: Vec<usize> = reach
+                .iter()
+                .flat_map(|&p| p + 1..(p + 1 + MAX_GAP).min(t.len()))
+                .filter(|&k| t[k] == *want)
+                .collect();
+            next.sort_unstable();
+            next.dedup();
+            reach = next;
+            if reach.is_empty() {
+                break;
             }
         }
-        if (pos - start + 1) as f64 <= max_span {
-            return Some(Match::Reflowed);
+        if let Some(&end) = reach.first() {
+            if (end - start + 1) as f64 <= max_span {
+                return Some(Match::Reflowed);
+            }
         }
     }
     None
@@ -95,6 +106,7 @@ mod tests {
             Some(Match::Reflowed)
         );
         assert_eq!(match_quote("anything", ""), None);
+        assert_eq!(match_quote("anything", " \n "), None);
     }
 
     #[test]

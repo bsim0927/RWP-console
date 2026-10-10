@@ -18,7 +18,7 @@ def norm(s):
 def match_quote_py(text, quote):
     """'exact', 'reflowed', or None. Reflowed means every word of the quote appears on the
     page in order, interrupted only by short runs such as a two-column label ("Amount:")."""
-    if not quote:
+    if not quote or not norm(quote):
         return None
     if norm(quote) in norm(text):
         return "exact"
@@ -26,14 +26,14 @@ def match_quote_py(text, quote):
     if len(q) < 5:
         return None
     for start in (i for i, w in enumerate(t) if w == q[0]):
-        j, pos, ok = 1, start, True
-        while j < len(q):
-            nxt = next((k for k in range(pos + 1, min(pos + 1 + MAX_GAP, len(t))) if t[k] == q[j]), None)
-            if nxt is None:
-                ok = False
+        # Every position the current quote word can sit at. Keeping all of them, not just the
+        # nearest, matters when a word repeats: a later "the" may be the one that reaches on.
+        reach = {start}
+        for w in q[1:]:
+            reach = {k for p in reach for k in range(p + 1, min(p + 1 + MAX_GAP, len(t))) if t[k] == w}
+            if not reach:
                 break
-            pos, j = nxt, j + 1
-        if ok and pos - start + 1 <= len(q) * 1.3 + 4:
+        if reach and min(reach) - start + 1 <= len(q) * 1.3 + 4:
             return "reflowed"
     return None
 

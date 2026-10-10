@@ -101,19 +101,23 @@ class MatchQuoteCases:
         # "$2.5" and "2.5" are different words, so this quote does not reflow.
         self.assertIsNone(self.m("fee of 2.5 per cent annually here", "fee of $2.5 per cent annually here"))
 
-    @unittest.expectedFailure
-    def test_known_bug_greedy_choice_of_repeated_word(self):
-        # w1 appears at 1 and 4. Matching takes the nearest (1), then cannot reach w2 at 8.
-        # Taking w1 at 4 matches, with every gap legal and a span of 16 <= 17.
+    def test_repeated_word_tries_every_occurrence(self):
+        # w1 appears at 1 and 4. From 1, w2 at 8 is out of reach; from 4 it is not.
+        # Every gap is legal and the span is 16 <= 17.
         q = " ".join(f"w{i}" for i in range(10))
         page = "w0 w1 f f w1 f f f w2 " + " ".join(f"w{i}" for i in range(3, 10))
         self.assertEqual(self.m(page, q), "reflowed")
 
+    def test_repeated_word_still_respects_span(self):
+        q = " ".join(f"w{i}" for i in range(10))
+        page = "w0 w1 f f w1 f f f f f w2 " + " ".join(f"w{i} f" for i in range(3, 10))
+        self.assertIsNone(self.m(page, q))
 
-    @unittest.expectedFailure
-    def test_known_bug_whitespace_quote_is_exact(self):
-        # norm("  ") is "", and "" is in every page.
-        self.assertIsNone(self.m("any page at all", "   "))
+
+    def test_whitespace_only_quote(self):
+        # norm("  ") is "", and "" is in every page, so this must be caught first.
+        self.assertIsNone(self.m("any page at all", "   \n\t"))
+        self.assertIsNone(self.m("", " "))
 
 for _name, _fn in IMPLS.items():
     _cls = type(f"MatchQuote_{_name}", (MatchQuoteCases, unittest.TestCase), {"match": staticmethod(_fn)})
@@ -154,6 +158,47 @@ class Parity(unittest.TestCase):
             with self.subTest(page=repr(page), quote=repr(quote)):
                 self.assertEqual(IMPLS["rust"](page, quote), IMPLS["python"](page, quote))
 
+
+def brute_force(text, quote):
+    """The rule written out directly: try every in-order placement of the quote's words."""
+    if not dataroom.norm(quote):
+        return None
+    if dataroom.norm(quote) in dataroom.norm(text):
+        return "exact"
+    q, t = dataroom.words(quote), dataroom.words(text)
+    if len(q) < 5:
+        return None
+
+    def ends(j, pos):  # every position the last quote word can land on, from q[j] at pos
+        if j == len(q) - 1:
+            yield pos
+            return
+        for k in range(pos + 1, min(pos + 1 + dataroom.MAX_GAP, len(t))):
+            if t[k] == q[j + 1]:
+                yield from ends(j + 1, k)
+
+    for start in range(len(t)):
+        if t[start] == q[0] and any(e - start + 1 <= len(q) * 1.3 + 4 for e in ends(0, start)):
+            return "reflowed"
+    return None
+
+
+class AgainstBruteForce(unittest.TestCase):
+    """Few distinct words, so repeats, competing paths and the span limit all come up."""
+
+    def test_random_cases(self):
+        rng = random.Random(3)
+        vocab = ["a", "b", "c", "d", "x"]
+        hits = 0
+        for _ in range(20000):
+            page = " ".join(rng.choice(vocab) for _ in range(rng.randint(5, 30)))
+            quote = " ".join(rng.choice(vocab[:4]) for _ in range(rng.randint(5, 9)))
+            want = brute_force(page, quote)
+            hits += want == "reflowed"
+            for name, fn in IMPLS.items():
+                with self.subTest(impl=name, page=page, quote=quote):
+                    self.assertEqual(fn(page, quote), want)
+        self.assertGreater(hits, 500)  # the generator must actually exercise reflowed matches
 
 class Dispatch(unittest.TestCase):
     def test_lone_surrogate_falls_back_to_python(self):
