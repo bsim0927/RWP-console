@@ -1,0 +1,19 @@
+[package]
+name = "verify"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "_verify"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.27", features = ["extension-module", "abi3-py310"], optional = true }
+
+[features]
+default = ["python"]
+python = ["dep:pyo3"]
+
+[profile.release]
+lto = true
