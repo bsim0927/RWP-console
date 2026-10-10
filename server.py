@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sg import gate_store, monitor, store  # noqa: E402
+from sg import gate_store, monitor, policy_store, store  # noqa: E402
 from sg.catalog import build as build_catalog  # noqa: E402
 from sg.pipeline import ROOT, Tracker, load_gates, run  # noqa: E402
 
@@ -345,6 +345,8 @@ class H(BaseHTTPRequestHandler):
                 for k, j in JOBS.items()
             ][::-1]
             return self.send(out)
+        if parts == ["api", "policy", "history"]:
+            return self.send(policy_store.history())
         if parts == ["api", "gates", "history"]:
             return self.send(gate_store.history(qs.get("file", [None])[0]))
         if parts == ["api", "config"]:
@@ -352,8 +354,13 @@ class H(BaseHTTPRequestHandler):
                 {"file": g["file"], "text": g["text"], "parsed": yaml.safe_load(g["text"])}
                 for g in gate_store.current()
             ]
-            pol = store.policy()["yaml"]
-            return self.send({"gates": gates, "policy": {"text": pol, "parsed": yaml.safe_load(pol)}})
+            pol = store.policy()
+            return self.send(
+                {
+                    "gates": gates,
+                    "policy": {"id": pol["id"], "text": pol["yaml"], "parsed": yaml.safe_load(pol["yaml"])},
+                }
+            )
         if parts == ["api", "logs"]:
             jobs = [
                 {
@@ -448,6 +455,32 @@ class H(BaseHTTPRequestHandler):
             return self.send(store.summaries(parts[2], newest_first=False))
         self.send({"error": "not found"}, code=404)
 
+    def policy_write(self, method):
+        parts = [unquote(p) for p in urlparse(self.path).path.split("/") if p]
+        if parts[:2] != ["api", "policy"]:
+            return False
+        try:
+            if method == "PUT" and parts == ["api", "policy"]:
+                out = policy_store.save(self.body()["text"])
+            elif method == "POST" and parts == ["api", "policy", "restore"]:
+                out = policy_store.restore(self.body()["id"])
+            elif method == "POST" and parts == ["api", "policy", "validate"]:
+                try:
+                    parsed = yaml.safe_load(self.body()["text"])
+                except yaml.YAMLError as e:
+                    return self.send({"errors": [f"YAML does not parse: {e}"], "warnings": []}) or True
+                err, warn = policy_store.validate(parsed)
+                out = {"errors": err, "warnings": warn, "policy": parsed}
+            else:
+                return self.send({"error": "not found"}, code=404) or True
+        except (gate_store.GateError, KeyError, ValueError) as e:
+            errors = e.errors if isinstance(e, gate_store.GateError) else [f"bad request: {e}"]
+            return self.send({"error": "; ".join(errors), "errors": errors}, code=400) or True
+        if parts[-1] != "validate":
+            log("policy", f"{method} {'/'.join(parts[1:])}: {json.dumps(out)[:200]}")
+        self.send(out)
+        return True
+
     def gate_write(self, method):
         parts = [unquote(p) for p in urlparse(self.path).path.split("/") if p]
         if parts[:2] != ["api", "gates"]:
@@ -481,7 +514,7 @@ class H(BaseHTTPRequestHandler):
         return True
 
     def do_PUT(self):
-        if not self.gate_write("PUT"):
+        if not (self.policy_write("PUT") or self.gate_write("PUT")):
             self.send({"error": "not found"}, code=404)
 
     def do_DELETE(self):
@@ -489,7 +522,7 @@ class H(BaseHTTPRequestHandler):
             self.send({"error": "not found"}, code=404)
 
     def do_POST(self):
-        if self.gate_write("POST"):
+        if self.policy_write("POST") or self.gate_write("POST"):
             return
         parts = [p for p in urlparse(self.path).path.split("/") if p]
         if parts[:2] == ["api", "catalog"] and len(parts) == 4 and parts[3] == "rebuild":
