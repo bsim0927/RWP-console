@@ -71,7 +71,7 @@ repos:
         name: pytest (backend tests)
         entry: uv run --frozen pytest -q -x
         language: system
-        files: ^(sg/|tests/|server\.py|screen\.py|catalog\.py|gates/|policy\.yaml|pyproject\.toml)
+        files: ^(sg/|tests/|server\.py|screen\.py|catalog\.py|supabase/|pyproject\.toml)
         pass_filenames: false
 
       - id: eslint
@@ -110,6 +110,6 @@ repos:
         name: playwright recipes (desktop)
         entry: npx --no-install playwright test --project=desktop
         language: system
-        files: ^(web/|server\.py|sg/|gates/|policy\.yaml|e2e/|playwright\.config\.js)
+        files: ^(web/|server\.py|sg/|supabase/|e2e/|playwright\.config\.js)
         pass_filenames: false
         stages: [pre-push]

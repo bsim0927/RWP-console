@@ -1,20 +1,19 @@
-"""Create, edit, reorder and remove gate files from the console, with validation and a version history.
+"""Create, edit, reorder and remove gates from the console, with validation and a version history.
 
-Every overwrite or delete first copies the current file to gates/.history/, so any change can be restored.
-Files are named <position>_<id>.yaml; the position prefix is the order the pipeline and the UI use.
+Gates live in the `gates` table; every overwrite or delete first copies the current row to `gate_history`,
+so any change can be restored. The console addresses a gate as "<position>_<id>.yaml", the name it had
+when gates were files; `position` is the order the pipeline and the UI use.
 """
 
 import ast
-import os
 import re
-import time
-from pathlib import Path
 
 import yaml
 
-GATES = Path(__file__).resolve().parent.parent / "gates"
-HISTORY = GATES / ".history"
+from . import db
+
 ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,48}$")
+FILE_RE = re.compile(r"^(\d+)_([a-z][a-z0-9_]*)\.yaml$")
 QTYPES = ("bool", "choice")
 CHECK_NAMES = {"total_pct"}  # names code_checks() adds to the rule environment
 
@@ -25,20 +24,44 @@ class GateError(ValueError):
         self.errors = errors
 
 
-def files():
-    return sorted(GATES.glob("*.yaml"), key=lambda p: (_pos(p), p.name))
+def _file(position, gid):
+    return f"{position}_{gid}.yaml"
 
 
-def _pos(p):
-    m = re.match(r"(\d+)_", p.name)
-    return int(m.group(1)) if m else 999
+def current():
+    """Live gates in pipeline order: [{file, id, position, version, text}]."""
+    with db.tx() as c:
+        rows = c.execute("select id, position, version, yaml from gates order by position, id").fetchall()
+    return [
+        {
+            "file": _file(r["position"], r["id"]),
+            "id": r["id"],
+            "position": r["position"],
+            "version": r["version"],
+            "text": r["yaml"],
+        }
+        for r in rows
+    ]
 
 
-def _path(name):
-    p = GATES / name
-    if p.parent != GATES or p.suffix != ".yaml" or not p.exists():
+def _get(c, name):
+    m = FILE_RE.match(name or "")
+    row = (
+        m
+        and c.execute(
+            "select id, position, version, yaml from gates where id = %s and position = %s", (m[2], int(m[1]))
+        ).fetchone()
+    )
+    if not row:
         raise GateError([f"unknown gate file {name}"])
-    return p
+    return row
+
+
+def _backup(c, row, reason):
+    c.execute(
+        "insert into gate_history (gate_id, position, yaml, version, reason) values (%s, %s, %s, %s, %s)",
+        (row["id"], row["position"], row["yaml"], row["version"], reason),
+    )
 
 
 def validate(g, own_file=None):
@@ -51,9 +74,9 @@ def validate(g, own_file=None):
     if not isinstance(gid, str) or not ID_RE.match(gid):
         err.append("id must be lowercase letters, digits and underscores, starting with a letter")
     else:
-        for p in files():
-            if p.name != own_file and (yaml.safe_load(p.read_text()) or {}).get("id") == gid:
-                err.append(f"id {gid} is already used by {p.name}")
+        for cur in current():
+            if cur["file"] != own_file and cur["id"] == gid:
+                err.append(f"id {gid} is already used by {cur['file']}")
     if not isinstance(g.get("version", 1), int):
         err.append("version must be a whole number")
     if g.get("static_result"):
@@ -134,18 +157,6 @@ def _dump(g):
     return yaml.safe_dump(g, sort_keys=False, allow_unicode=True, width=110, default_flow_style=None)
 
 
-def _backup(p, reason):
-    HISTORY.mkdir(exist_ok=True)
-    stamp = time.strftime("%Y%m%dT%H%M%S")
-    (HISTORY / f"{p.stem}.{stamp}.{reason}.yaml").write_text(p.read_text())
-
-
-def _write(p, text):
-    tmp = p.with_suffix(".yaml.tmp")
-    tmp.write_text(text)
-    os.replace(tmp, p)  # the pipeline never sees a half-written gate
-
-
 def _text_for(body):
     """Body carries either raw YAML text (comments kept) or a structured gate (form editor)."""
     if "text" in body:
@@ -175,89 +186,93 @@ def create(body):
     g.setdefault("version", 1)
     if "version:" not in text:
         text = _dump(g)
-    pos = max([_pos(p) for p in files() if _pos(p) < 999] or [0]) + 1
-    p = GATES / f"{pos}_{g['id']}.yaml"
-    _write(p, text)
-    return {"file": p.name, "warnings": warn}
+    with db.tx() as c:
+        pos = c.execute("select coalesce(max(position), 0) + 1 as p from gates").fetchone()["p"]  # type: ignore[index]
+        c.execute(
+            "insert into gates (id, position, yaml, version) values (%s, %s, %s, %s)",
+            (g["id"], pos, text, g["version"]),
+        )
+    return {"file": _file(pos, g["id"]), "warnings": warn}
 
 
 def update(name, body):
-    p = _path(name)
-    old = yaml.safe_load(p.read_text())
-    text, g = _text_for(body)
-    err, warn = validate(g, own_file=name)
-    if err:
-        raise GateError(err)
-    text, g = _bump(text, g, old)
-    if text == p.read_text():
-        return {"file": name, "warnings": warn, "unchanged": True}
-    _backup(p, "edit")
-    target = p
-    if g["id"] != old.get("id"):  # keep the file name in step with the id
-        target = GATES / f"{_pos(p)}_{g['id']}.yaml"
-        p.unlink()
-    _write(target, text)
-    return {"file": target.name, "warnings": warn, "version": g.get("version")}
+    with db.tx() as c:
+        row = _get(c, name)
+        old = yaml.safe_load(row["yaml"])
+        text, g = _text_for(body)
+        err, warn = validate(g, own_file=name)
+        if err:
+            raise GateError(err)
+        text, g = _bump(text, g, old)
+        if text == row["yaml"]:
+            return {"file": name, "warnings": warn, "unchanged": True}
+        _backup(c, row, "edit")
+        c.execute(
+            "update gates set id = %s, yaml = %s, version = %s, updated_at = now() where id = %s",
+            (g["id"], text, int(g.get("version") or 1), row["id"]),
+        )
+    return {"file": _file(row["position"], g["id"]), "warnings": warn, "version": g.get("version")}
 
 
 def remove(name):
-    p = _path(name)
-    _backup(p, "deleted")
-    p.unlink()
+    with db.tx() as c:
+        row = _get(c, name)
+        _backup(c, row, "deleted")
+        c.execute("delete from gates where id = %s", (row["id"],))
     return {"removed": name}
 
 
 def reorder(order):
-    current = {p.name: p for p in files()}
-    if sorted(order) != sorted(current):
-        raise GateError(["the new order must list every gate file exactly once"])
-    staged = []
-    for i, name in enumerate(order, 1):
-        tmp = GATES / f".reorder.{name}"
-        os.replace(current[name], tmp)
-        staged.append((tmp, GATES / re.sub(r"^\d+_", f"{i}_", name if re.match(r"\d+_", name) else f"{i}_{name}")))
-    for tmp, final in staged:
-        os.replace(tmp, final)
-    return {"order": [f.name for _, f in staged]}
+    with db.tx() as c:
+        live = {_file(r["position"], r["id"]): r["id"] for r in c.execute("select id, position from gates").fetchall()}
+        if sorted(order) != sorted(live):
+            raise GateError(["the new order must list every gate file exactly once"])
+        for i, name in enumerate(order, 1):
+            c.execute("update gates set position = %s where id = %s", (i, live[name]))
+    return {"order": [_file(i, live[n]) for i, n in enumerate(order, 1)]}
 
 
 def history(name=None):
-    if not HISTORY.exists():
-        return []
-    out = []
-    for p in sorted(HISTORY.glob("*.yaml"), reverse=True):
-        stem, stamp, reason = (p.name[:-5].rsplit(".", 2) + ["", ""])[:3]
-        if name and stem != Path(name).stem and stem.split("_", 1)[-1] != Path(name).stem.split("_", 1)[-1]:
-            continue
-        g = yaml.safe_load(p.read_text()) or {}
-        out.append(
-            {
-                "file": p.name,
-                "gate_file": stem + ".yaml",
-                "id": g.get("id"),
-                "version": g.get("version"),
-                "stamp": stamp,
-                "reason": reason,
-                "text": p.read_text(),
-            }
-        )
-    return out
+    """Saved prior states, newest first. A history entry's handle ("file") is its row id."""
+    m = FILE_RE.match(name or "")
+    with db.tx() as c:
+        rows = c.execute(
+            """select id, gate_id, position, yaml, version, reason,
+                      to_char(created_at at time zone current_setting('TimeZone'), 'YYYYMMDD"T"HH24MISS') as stamp
+               from gate_history where %(g)s::text is null or gate_id = %(g)s order by id desc""",
+            {"g": m[2] if m else None},
+        ).fetchall()
+    return [
+        {
+            "file": str(r["id"]),
+            "gate_file": _file(r["position"], r["gate_id"]),
+            "id": r["gate_id"],
+            "version": r["version"],
+            "stamp": r["stamp"],
+            "reason": r["reason"],
+            "text": r["yaml"],
+        }
+        for r in rows
+    ]
 
 
 def restore(hist_file):
-    src = HISTORY / hist_file
-    if src.parent != HISTORY or not src.exists():
+    with db.tx() as c:
+        src = c.execute(
+            "select yaml from gate_history where id = %s", (int(hist_file) if str(hist_file).isdigit() else -1,)
+        ).fetchone()
+    if not src:
         raise GateError([f"unknown history entry {hist_file}"])
-    text = src.read_text()
+    text = src["yaml"]
     g = _parse(text)
-    live = next((p for p in files() if (yaml.safe_load(p.read_text()) or {}).get("id") == g.get("id")), None)
+    live = next((x for x in current() if x["id"] == g.get("id")), None)
     if live:
         # A restore is a new version, never a step back, so run records stay unambiguous.
-        nxt = int((yaml.safe_load(live.read_text()) or {}).get("version") or 0) + 1
+        nxt = int(live["version"] or 0) + 1
         text = (
             re.sub(r"(?m)^version:\s*\d+", f"version: {nxt}", text, count=1)
             if re.search(r"(?m)^version:", text)
             else _dump({**g, "version": nxt})
         )
-        return update(live.name, {"text": text})
+        return update(live["file"], {"text": text})
     return create({"text": text})

@@ -1,21 +1,19 @@
 """Deterministic document catalog for a data room.
 
-Built once per room from _index/pages.jsonl plus the source PDFs. No model calls.
+Built once per room from _index/pages.jsonl plus the source PDFs, and saved to the database. No model calls.
 Every label records where it came from, so a human can see what to trust.
 Source files are never renamed or moved.
 """
 
 import hashlib
-import json
 import re
 import subprocess
 from collections import defaultdict
 from pathlib import Path
 
+from . import store
 from .dataroom import DataRoom, norm
 from .sections import build_sections
-
-ROOT = Path(__file__).resolve().parent.parent
 
 # (doc_type, regex). Checked against the filename first, then each folder from deepest up.
 # First match wins, so specific types sit above generic ones.
@@ -335,11 +333,9 @@ def build(folder):
     for d in docs:
         d.pop("_sort")
     summary = summarize(room.name, docs)
-    out = ROOT / "catalog" / re.sub(r"[^\w.-]+", "_", room.name)
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "documents.jsonl").write_text("".join(json.dumps(d) + "\n" for d in docs))
-    (out / "summary.json").write_text(json.dumps(summary, indent=2))
-    return out, summary, docs
+    room_id = re.sub(r"[^\w.-]+", "_", room.name)
+    store.save_catalog(room_id, room.name, docs, summary)
+    return room_id, summary, docs
 
 
 def summarize(name, docs):
@@ -378,10 +374,7 @@ def summarize(name, docs):
 
 def load(folder):
     """Catalog docs for a room, building it when missing or from before the section index."""
-    name = re.sub(r"[^\w.-]+", "_", Path(folder).name)
-    f = ROOT / "catalog" / name / "documents.jsonl"
-    if f.exists():
-        docs = [json.loads(line) for line in f.open()]
-        if docs and all("structure" in d for d in docs):
-            return docs
+    hit = store.catalog(re.sub(r"[^\w.-]+", "_", Path(folder).name))
+    if hit and hit[1] and all("structure" in d for d in hit[1]):
+        return hit[1]
     return build(folder)[2]

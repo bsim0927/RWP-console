@@ -1,19 +1,24 @@
-"""Build a self-contained, deterministic workspace for the Playwright suite.
+"""Build a deterministic fixture for the Playwright suite: invented data rooms and a fresh database.
 
-    python e2e/fixtures/build.py <workspace>
+    python e2e/fixtures/build.py <workspace>     # prints the data root, then the DATABASE_URL
 
-The workspace holds a copy of the app (server.py, sg/, gates/, policy.yaml; web/ is symlinked) and a
-synthetic data root with invented funds. It then runs the real catalog and screening pipeline over
-those rooms with scripted extractor and judge stubs, so every view renders genuine run output
-without API keys, network calls, or real fund documents. The repo's own gates/, runs/ and catalog/
-are never touched, so tests may edit gates freely.
+Writes a synthetic data root with invented funds under <workspace>, and rebuilds the `rwp_e2e`
+database on the local test Postgres (TEST_DATABASE_URL, default the local Supabase stack) from
+supabase/migrations, so it starts with the shipped gates and policy. It then runs the real catalog and
+screening pipeline over the rooms with scripted extractor and judge stubs, so every view renders
+genuine run output without API keys, network calls, or real fund documents. Tests may edit gates
+freely: nothing outside the workspace and the rwp_e2e database is touched.
 """
 
 import json
+import os
 import shutil
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+
+import psycopg
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -284,20 +289,32 @@ def install_stubs():
     judges.JUDGES["fixture"] = judge
 
 
+def fresh_database(name="rwp_e2e"):
+    """Drop and recreate `name` on the local test server, apply every migration, return its URL."""
+    admin = os.environ.get("TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres")
+    parts = urlsplit(admin)
+    if parts.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise SystemExit(f"TEST_DATABASE_URL points at {parts.hostname}; the e2e fixture only uses a local Postgres")
+    with psycopg.connect(admin, autocommit=True) as a:
+        a.execute(f'drop database if exists "{name}" with (force)')
+        a.execute(f'create database "{name}"')
+    url = urlunsplit(parts._replace(path=f"/{name}"))
+    with psycopg.connect(url, autocommit=True) as c:
+        for m in sorted((REPO / "supabase" / "migrations").glob("*.sql")):
+            c.execute(m.read_text())
+    return url
+
+
 def main(workspace):
     ws = Path(workspace).resolve()
     if ws.exists():
         shutil.rmtree(ws)
     ws.mkdir(parents=True)
-    for name in ("server.py", "policy.yaml"):
-        shutil.copy2(REPO / name, ws / name)
-    for name in ("sg", "gates"):
-        shutil.copytree(REPO / name, ws / name, ignore=shutil.ignore_patterns("__pycache__", "*.so"))
-    (ws / "web").symlink_to(REPO / "web", target_is_directory=True)
     data_root = ws / "data"
     folders = write_rooms(data_root)
+    os.environ["DATABASE_URL"] = url = fresh_database()
 
-    sys.path.insert(0, str(ws))  # import the workspace copy, so ROOT points into the workspace
+    sys.path.insert(0, str(REPO))
     from sg.catalog import build as build_catalog
     from sg.pipeline import run
 
@@ -307,8 +324,9 @@ def main(workspace):
     # Bluefield stays unscreened, so the "Not screened" state is covered too.
     for folder in folders[:2]:
         run(folder, "fixture", "fixture")
-        time.sleep(1.1)  # run folders are stamped to the second
+        time.sleep(1.1)  # runs are stamped to the second
     print(data_root)
+    print(url)
 
 
 if __name__ == "__main__":

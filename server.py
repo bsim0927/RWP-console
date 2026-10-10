@@ -17,14 +17,13 @@ from urllib.parse import parse_qs, unquote, urlparse
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sg import gate_store, monitor  # noqa: E402
+from sg import gate_store, monitor, store  # noqa: E402
 from sg.catalog import build as build_catalog  # noqa: E402
 from sg.pipeline import ROOT, Tracker, load_gates, run  # noqa: E402
 
 JOBS: dict[str, dict] = {}
 LOG: collections.deque[dict] = collections.deque(maxlen=1000)  # in-memory event log, newest last
 WEB = ROOT / "web"
-RUNS = ROOT / "runs"
 
 DATA_ROOT = Path(
     sys.argv[1] if len(sys.argv) > 1 else os.environ.get("RWP_DATA_ROOT", str(Path.home() / "Desktop/RWP"))
@@ -48,18 +47,6 @@ def discover():
         folder = idx.parent.parent
         rooms[slug(folder.name)] = folder
     return rooms
-
-
-def runs_for(fid):
-    d = RUNS / fid
-    return sorted([p.name for p in d.iterdir() if p.is_dir()], reverse=True) if d.exists() else []
-
-
-def read_json(p):
-    try:
-        return json.loads(p.read_text())
-    except (OSError, ValueError):
-        return None
 
 
 def inside(base, p):
@@ -219,25 +206,12 @@ def search(q, rooms, limit=80):
 # ---------- analytics over every logged run ----------
 
 
-def all_runs():
-    out: list[dict] = []
-    if not RUNS.exists():
-        return out
-    for fdir in sorted(p for p in RUNS.iterdir() if p.is_dir()):
-        for rdir in sorted(p for p in fdir.iterdir() if p.is_dir()):
-            s = read_json(rdir / "summary.json")
-            if s:
-                out.append(dict(s, fund_id=fdir.name))
-    out.sort(key=lambda s: s["run"], reverse=True)
-    return out
-
-
 def analytics():
     """One row per gate per run: result, confidence, evidence counts, tokens, step seconds."""
     rows = []
-    for s in all_runs():
-        for gp in sorted((RUNS / s["fund_id"] / s["run"] / "gates").glob("*.json")):
-            g = read_json(gp) or {}
+    for r in sorted(store.runs_with_gates(), key=lambda r: r["summary"]["run"], reverse=True):
+        s = dict(r["summary"], fund_id=r["fund_id"])
+        for g in r["gates"]:
             b = g.get("brief") or {}
             usage = ((g.get("answers") or {}).get("_meta") or {}).get("usage") or {}
             steps = {
@@ -251,7 +225,7 @@ def analytics():
                     "run": s["run"],
                     "extractor": s.get("extractor"),
                     "judge": s.get("judge"),
-                    "gate": g.get("gate", gp.stem),
+                    "gate": g.get("gate"),
                     "result": g.get("result"),
                     "review": bool(g.get("review")),
                     "min_confidence": g.get("min_confidence"),
@@ -328,8 +302,9 @@ class H(BaseHTTPRequestHandler):
         if parts == ["api", "funds"]:
             pipe = [r for s in parse_pipeline()["sections"] for r in s["rows"]]
             out = []
+            stamps, latest, catalogs = store.stamps_by_fund(), store.latest_summaries(), store.catalog_summaries()
             for fid, folder in sorted(rooms.items()):
-                rs = runs_for(fid)
+                rs = stamps.get(fid, [])
                 rel = folder.relative_to(DATA_ROOT)
                 out.append(
                     {
@@ -339,14 +314,14 @@ class H(BaseHTTPRequestHandler):
                         "vpath": to_virtual(str(rel)),
                         "stage": next((p for p in rel.parts if re.match(r"\d-", p)), None),
                         "runs": rs,
-                        "latest": read_json(RUNS / fid / rs[0] / "summary.json") if rs else None,
-                        "catalog": read_json(ROOT / "catalog" / fid / "summary.json"),
+                        "latest": latest.get(fid),
+                        "catalog": catalogs.get(fid),
                         "pipeline": match_pipeline(folder.name, pipe),
                     }
                 )
             return self.send(out)
         if parts == ["api", "runs"]:
-            return self.send(all_runs())
+            return self.send(store.summaries())
         if parts == ["api", "analytics"]:
             return self.send(analytics())
         if parts == ["api", "pipeline"]:
@@ -374,10 +349,10 @@ class H(BaseHTTPRequestHandler):
             return self.send(gate_store.history(qs.get("file", [None])[0]))
         if parts == ["api", "config"]:
             gates = [
-                {"file": p.name, "text": p.read_text(), "parsed": yaml.safe_load(p.read_text())}
-                for p in gate_store.files()
+                {"file": g["file"], "text": g["text"], "parsed": yaml.safe_load(g["text"])}
+                for g in gate_store.current()
             ]
-            pol = (ROOT / "policy.yaml").read_text()
+            pol = store.policy()["yaml"]
             return self.send({"gates": gates, "policy": {"text": pol, "parsed": yaml.safe_load(pol)}})
         if parts == ["api", "logs"]:
             jobs = [
@@ -439,21 +414,11 @@ class H(BaseHTTPRequestHandler):
             return self.send({"room": None, "pages": []})
         if parts[:2] == ["api", "run"] and len(parts) == 4:
             fid, stamp = parts[2], parts[3]
-            base = RUNS / fid / stamp
-            if not inside(RUNS, base) or not base.exists():
+            found = store.run(fid, stamp)
+            if found is None:
                 return self.send({"error": "not found"}, code=404)
-            summary = json.loads((base / "summary.json").read_text())
-            gates = [json.loads(p.read_text()) for p in sorted((base / "gates").glob("*.json"))]
-            md = base / "summary.md"
             room = rooms.get(fid)
-            return self.send(
-                {
-                    "summary": summary,
-                    "gates": gates,
-                    "markdown": md.read_text() if md.exists() else "",
-                    "room_path": str(room.relative_to(DATA_ROOT)) if room else None,
-                }
-            )
+            return self.send({**found, "room_path": str(room.relative_to(DATA_ROOT)) if room else None})
         if parts[:2] == ["api", "job"] and len(parts) == 3:
             j = JOBS.get(parts[2])
             if not j:
@@ -472,23 +437,15 @@ class H(BaseHTTPRequestHandler):
             folder = rooms.get(parts[2])
             if not folder:
                 return self.send({"error": "unknown fund"}, code=404)
-            base = ROOT / "catalog" / parts[2]
-            if not (base / "documents.jsonl").exists():
+            hit = store.catalog(parts[2])
+            if hit is None:
                 log("catalog", f"building catalog for {folder.name}")
                 build_catalog(folder)
-            docs = [json.loads(line) for line in (base / "documents.jsonl").open()]
-            return self.send(
-                {
-                    "summary": json.loads((base / "summary.json").read_text()),
-                    "docs": docs,
-                    "room_path": str(folder.relative_to(DATA_ROOT)),
-                }
-            )
+                hit = store.catalog(parts[2])
+            summary, docs = hit
+            return self.send({"summary": summary, "docs": docs, "room_path": str(folder.relative_to(DATA_ROOT))})
         if parts[:2] == ["api", "history"] and len(parts) == 3:
-            rows = []
-            for stamp in sorted(runs_for(parts[2])[::-1]):
-                rows.append(json.loads((RUNS / parts[2] / stamp / "summary.json").read_text()))
-            return self.send(rows)
+            return self.send(store.summaries(parts[2], newest_first=False))
         self.send({"error": "not found"}, code=404)
 
     def gate_write(self, method):
@@ -570,9 +527,9 @@ class H(BaseHTTPRequestHandler):
 
         def work():
             try:
-                out, summary, _ = run(folder, ex, jd, tracker=tr)
-                job.update(status="done", run=out.name, seconds=summary.get("seconds"))
-                log("job", f"screen finished: {folder.name}: {summary['disposition']}", job=jid, run=out.name)
+                _, summary, _ = run(folder, ex, jd, tracker=tr)
+                job.update(status="done", run=summary["run"], seconds=summary.get("seconds"))
+                log("job", f"screen finished: {folder.name}: {summary['disposition']}", job=jid, run=summary["run"])
             except (SystemExit, Exception) as e:  # missing key, API errors
                 job.update(status="error", error=str(e) or type(e).__name__, seconds=round(time.time() - tr.t0, 1))
                 log("job", f"screen failed: {folder.name}: {job['error']}", "error", job=jid)

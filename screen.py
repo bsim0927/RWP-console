@@ -19,4 +19,4 @@ out, summary, results = run(a.data_room, a.extractor, a.judge, a.gates.split(","
 print(f"{summary['fund']}: {summary['disposition']}")
 for r in results:
     print(f"  {r['gate']:<22} {r['result']:<22} review={r.get('review')}")
-print(f"log: {out}")
+print(f"run saved: {out}")

@@ -1,4 +1,4 @@
-"""Load gates, run extract -> verify -> judge -> derive, reduce to a disposition, log it all."""
+"""Load gates, run extract -> verify -> judge -> derive, reduce to a disposition, save it to the database."""
 
 import hashlib
 import json
@@ -10,6 +10,7 @@ from pathlib import Path
 
 import yaml
 
+from . import gate_store, store
 from .catalog import load as load_catalog
 from .dataroom import DataRoom
 from .extractors import EXTRACTORS
@@ -20,9 +21,11 @@ from .route import route
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def load_gates(only=None):
-    gates = [yaml.safe_load(p.read_text()) for p in sorted((ROOT / "gates").glob("*.yaml"))]
-    return [g for g in gates if not only or g["id"] in only]
+def load_gates(only=None, with_yaml=False):
+    """Live gates in pipeline order. with_yaml also returns {id: definition text} for the run record."""
+    live = gate_store.current()
+    gates = [g for g in (yaml.safe_load(x["text"]) for x in live) if not only or g["id"] in only]
+    return (gates, {x["id"]: x["text"] for x in live}) if with_yaml else gates
 
 
 def code_checks(gate, facts):
@@ -179,9 +182,10 @@ def reduce_gates(policy, results):
 
 def run(data_room, extractor, judge, only=None, tracker=None):
     room = DataRoom(data_room)
-    policy = yaml.safe_load((ROOT / "policy.yaml").read_text())
+    pol = store.policy()
+    policy = yaml.safe_load(pol["yaml"])
     tr = tracker or Tracker()
-    gates = load_gates(only)
+    gates, gate_yaml = load_gates(only, with_yaml=True)
     e = tr.begin("catalog", "catalog")
     catalog = load_catalog(data_room)
     tr.end(e, f"{sum(d['canonical'] for d in catalog)} canonical documents")
@@ -191,10 +195,6 @@ def run(data_room, extractor, judge, only=None, tracker=None):
         r["timeline"] = [e for e in tr.steps if e["gate"] == r["gate"]]
     disposition, flags = reduce_gates(policy, results)
     stamp = time.strftime("%Y%m%dT%H%M%S")
-    out = ROOT / "runs" / re.sub(r"[^\w.-]+", "_", room.name) / stamp
-    (out / "gates").mkdir(parents=True)
-    for r in results:
-        (out / "gates" / f"{r['gate']}.json").write_text(json.dumps(r, indent=2))
     summary = {
         "fund": room.name,
         "run": stamp,
@@ -208,11 +208,9 @@ def run(data_room, extractor, judge, only=None, tracker=None):
             for r in results
         },
     }
-    (out / "summary.json").write_text(json.dumps(summary, indent=2))
-    (out / "summary.md").write_text(render_md(summary, results))
-    with (ROOT / "runs" / "index.jsonl").open("a") as fh:
-        fh.write(json.dumps(summary) + "\n")
-    return out, summary, results
+    fund_id = re.sub(r"[^\w.-]+", "_", room.name)
+    store.save_run(fund_id, summary, results, render_md(summary, results), gate_yaml, pol["id"])
+    return f"{fund_id}/{stamp}", summary, results
 
 
 def render_md(summary, results):
