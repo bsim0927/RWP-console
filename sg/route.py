@@ -5,6 +5,7 @@ patterns. For each canonical document of those types, take the sections whose ti
 match. A short document with no matching section is read whole. Every choice is logged
 with its reason, so a reader can see exactly what the extractor was shown.
 """
+
 import re
 
 
@@ -25,28 +26,45 @@ def route(room, docs, sources):
     def take(d, start, end, title, why):
         nonlocal budget
         pages = [p for p in range(start, end + 1) if (d["path"], p) not in seen]
-        cut = pages[:min(per_section, budget)]
+        cut = pages[: min(per_section, budget)]
         if not cut:
             if end >= start and budget > 0:
-                plan.append({"doc": d["name"], "doc_type": d["doc_type"], "section": title,
-                             "pages": [start, end], "why": why + ", pages already included",
-                             "truncated": False})
+                plan.append(
+                    {
+                        "doc": d["name"],
+                        "doc_type": d["doc_type"],
+                        "section": title,
+                        "pages": [start, end],
+                        "why": why + ", pages already included",
+                        "truncated": False,
+                    }
+                )
             return
         for p in cut:
             seen.add((d["path"], p))
             chosen.append((d["path"], p, title))
         budget -= len(cut)
-        plan.append({"doc": d["name"], "doc_type": d["doc_type"], "section": title,
-                     "pages": [cut[0], cut[-1]], "why": why,
-                     "truncated": len(cut) < len(pages)})
+        plan.append(
+            {
+                "doc": d["name"],
+                "doc_type": d["doc_type"],
+                "section": title,
+                "pages": [cut[0], cut[-1]],
+                "why": why,
+                "truncated": len(cut) < len(pages),
+            }
+        )
 
     for d in candidates:
         if budget <= 0:
             break
         hits = [s for s in d.get("sections") or [] if pat and pat.search(s["title"])]
         # A broad parent and its matching children both hit; keep the narrower children.
-        hits = [s for s in hits if not any(o is not s and o["level"] > s["level"]
-                                           and s["start"] <= o["start"] <= s["end"] for o in hits)]
+        hits = [
+            s
+            for s in hits
+            if not any(o is not s and o["level"] > s["level"] and s["start"] <= o["start"] <= s["end"] for o in hits)
+        ]
         for s in hits:
             if budget <= 0:
                 break

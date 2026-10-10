@@ -1,5 +1,6 @@
 """Quote verification. Every case runs against each implementation in IMPLS, so the Rust
 port is held to exactly the Python behaviour."""
+
 import json
 import random
 import tempfile
@@ -95,7 +96,9 @@ class MatchQuoteCases:
         self.assertEqual(self.m(page, "alpha bravo charlie delta echo"), "reflowed")
 
     def test_match_at_end_of_page(self):
-        self.assertEqual(self.m(f"{filler(3)} alpha bravo x charlie delta echo", "alpha bravo charlie delta echo"), "reflowed")
+        self.assertEqual(
+            self.m(f"{filler(3)} alpha bravo x charlie delta echo", "alpha bravo charlie delta echo"), "reflowed"
+        )
 
     def test_dollar_percent_and_decimal_are_word_characters(self):
         # "$2.5" and "2.5" are different words, so this quote does not reflow.
@@ -113,11 +116,11 @@ class MatchQuoteCases:
         page = "w0 w1 f f w1 f f f f f w2 " + " ".join(f"w{i} f" for i in range(3, 10))
         self.assertIsNone(self.m(page, q))
 
-
     def test_whitespace_only_quote(self):
         # norm("  ") is "", and "" is in every page, so this must be caught first.
         self.assertIsNone(self.m("any page at all", "   \n\t"))
         self.assertIsNone(self.m("", " "))
+
 
 for _name, _fn in IMPLS.items():
     _cls = type(f"MatchQuote_{_name}", (MatchQuoteCases, unittest.TestCase), {"match": staticmethod(_fn)})
@@ -138,7 +141,7 @@ class Parity(unittest.TestCase):
             pw = page.split()
             if pw and rng.random() < 0.7:
                 i = rng.randrange(len(pw))
-                span = pw[i:i + rng.randint(1, 15)]
+                span = pw[i : i + rng.randint(1, 15)]
                 quote = [w for w in span if rng.random() > 0.25]  # drop words to make gaps
                 if rng.random() < 0.3:
                     quote.insert(rng.randint(0, len(quote)), rng.choice(self.VOCAB))
@@ -200,10 +203,12 @@ class AgainstBruteForce(unittest.TestCase):
                     self.assertEqual(fn(page, quote), want)
         self.assertGreater(hits, 500)  # the generator must actually exercise reflowed matches
 
+
 class Dispatch(unittest.TestCase):
     def test_lone_surrogate_falls_back_to_python(self):
         page = "bad \ud800 text: the minimum investment is $250,000"
         self.assertEqual(dataroom.match_quote(page, "minimum investment is $250,000"), "exact")
+
 
 class DataRoomVerify(unittest.TestCase):
     def setUp(self):

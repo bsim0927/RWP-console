@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Usage: python3 catalog.py <data-room-folder>  -> catalog/<room>/documents.jsonl, summary.json"""
+
 import json
 import sys
 from pathlib import Path

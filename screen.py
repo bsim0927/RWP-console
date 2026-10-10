@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Usage: python3 screen.py <data-room-folder> [--extractor claude] [--judge claude|jev] [--gates a,b]"""
+
 import argparse
 import sys
 from pathlib import Path

@@ -4,6 +4,7 @@ Built once per room from _index/pages.jsonl plus the source PDFs. No model calls
 Every label records where it came from, so a human can see what to trust.
 Source files are never renamed or moved.
 """
+
 import hashlib
 import json
 import re
@@ -27,8 +28,14 @@ TYPE_RULES = [
     ("terms", r"term sheet|summary of terms|key terms|fact ?(card|sheet)"),
     ("financials/audit", r"audit|financial statements|annual report|\b10-[kq]\b"),
     ("privacy", r"privacy"),
-    ("policies/compliance", r"polic|compliance|code of|ethics|valuation|form adv|\badv\b|brochure|operational diligence"),
-    ("deal-level", r"case study|closing memo|\bnbp\b|acquisition summary|investment summary|deal examples|deal \d|investment #|underwriting|extension and upsize"),
+    (
+        "policies/compliance",
+        r"polic|compliance|code of|ethics|valuation|form adv|\badv\b|brochure|operational diligence",
+    ),
+    (
+        "deal-level",
+        r"case study|closing memo|\bnbp\b|acquisition summary|investment summary|deal examples|deal \d|investment #|underwriting|extension and upsize",
+    ),
     ("news", r"news"),
     ("newsletter", r"newsletter"),
     ("research", r"white ?paper|research|market dynamics|commentary|outlook"),
@@ -40,22 +47,34 @@ TYPE_RULES = [
 ]
 
 TIER = {
-    "offering document": "core", "governing agreement": "core", "terms": "core",
-    "subscription": "core", "ddq": "core", "track record": "core",
-    "financials/audit": "core", "policies/compliance": "core",
-    "deck": "supporting", "deal-level": "supporting", "pipeline": "supporting",
-    "quarterly report": "supporting", "team": "supporting", "tax": "supporting",
-    "news": "noise", "newsletter": "noise", "research": "noise", "privacy": "noise",
+    "offering document": "core",
+    "governing agreement": "core",
+    "terms": "core",
+    "subscription": "core",
+    "ddq": "core",
+    "track record": "core",
+    "financials/audit": "core",
+    "policies/compliance": "core",
+    "deck": "supporting",
+    "deal-level": "supporting",
+    "pipeline": "supporting",
+    "quarterly report": "supporting",
+    "team": "supporting",
+    "tax": "supporting",
+    "news": "noise",
+    "newsletter": "noise",
+    "research": "noise",
+    "privacy": "noise",
 }
 
 # Periodic documents: a new period is not a new version of the old one.
-SERIES_TYPES = {"financials/audit", "quarterly report", "newsletter", "news", "research",
-                "track record", "deal-level"}
+SERIES_TYPES = {"financials/audit", "quarterly report", "newsletter", "news", "research", "track record", "deal-level"}
 
 STATUS_RANK = {"executed": 0, "final": 1, "unmarked": 2, "draft": 3, "archive": 4}
 
-MONTHS = {m: i for i, m in enumerate(
-    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+MONTHS = {
+    m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)
+}
 
 
 def classify(path):
@@ -141,8 +160,12 @@ def vehicle_hint(path):
 def bookmarks(pdf):
     """PDF outline via poppler's pdftohtml. Returns [{title, level, page}]."""
     try:
-        xml = subprocess.run(["pdftohtml", "-xml", "-i", "-stdout", "-f", "1", "-l", "1", str(pdf)],
-                             capture_output=True, text=True, timeout=60).stdout
+        xml = subprocess.run(
+            ["pdftohtml", "-xml", "-i", "-stdout", "-f", "1", "-l", "1", str(pdf)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
     except (OSError, subprocess.TimeoutExpired):
         return []
     out, level = [], 0
@@ -162,7 +185,7 @@ def bookmarks(pdf):
 
 def word_shingles(pages, k=8):
     w = norm(" ".join(p["text"] for p in pages)).split()
-    return {hashlib.md5(" ".join(w[i:i + k]).encode()).digest() for i in range(len(w) - k)}
+    return {hashlib.md5(" ".join(w[i : i + k]).encode()).digest() for i in range(len(w) - k)}
 
 
 def containment(a, b):
@@ -193,19 +216,36 @@ def build(folder):
                 break
         marks = bookmarks(pdf) if pdf.exists() else []
         sections, structure = build_sections(pages, marks)
-        docs.append({
-            "doc_id": hashlib.md5(path.encode()).hexdigest()[:10],
-            "path": path, "name": path.split("/")[-1], "folder": "/".join(path.split("/")[:-1]),
-            "pages": len(pages), "chars": sum(p["chars"] for p in pages),
-            "scan_pages": sum(p["chars"] < 50 for p in pages),
-            "byte_hash": byte_hash, "text_hash": hashlib.sha256(text.encode()).hexdigest()[:16],
-            "doc_type": doc_type, "type_source": type_source, "tier": tier,
-            "status": status_of(path), "as_of": as_of, "date_source": date_source, "_sort": sort_key,
-            "vehicle_hint": vehicle_hint(path), "stem": title_stem(path),
-            "sections": sections, "structure": structure,
-            "duplicate_of": None, "series": None, "version_group": None, "group_reason": None,
-            "canonical": True, "superseded_by": None,
-        })
+        docs.append(
+            {
+                "doc_id": hashlib.md5(path.encode()).hexdigest()[:10],
+                "path": path,
+                "name": path.split("/")[-1],
+                "folder": "/".join(path.split("/")[:-1]),
+                "pages": len(pages),
+                "chars": sum(p["chars"] for p in pages),
+                "scan_pages": sum(p["chars"] < 50 for p in pages),
+                "byte_hash": byte_hash,
+                "text_hash": hashlib.sha256(text.encode()).hexdigest()[:16],
+                "doc_type": doc_type,
+                "type_source": type_source,
+                "tier": tier,
+                "status": status_of(path),
+                "as_of": as_of,
+                "date_source": date_source,
+                "_sort": sort_key,
+                "vehicle_hint": vehicle_hint(path),
+                "stem": title_stem(path),
+                "sections": sections,
+                "structure": structure,
+                "duplicate_of": None,
+                "series": None,
+                "version_group": None,
+                "group_reason": None,
+                "canonical": True,
+                "superseded_by": None,
+            }
+        )
 
     def preference(d):
         # Lower sorts first: best status, then newest date, then shortest path.
@@ -262,8 +302,9 @@ def build(folder):
     for d in live:
         if d["status"] not in ("draft", "archive") or d["doc_id"] in group_of or d["doc_type"] in SERIES_TYPES:
             continue
-        cands = [o for o in live if o is not d and o["doc_type"] == d["doc_type"]
-                 and o["status"] not in ("draft", "archive")]
+        cands = [
+            o for o in live if o is not d and o["doc_type"] == d["doc_type"] and o["status"] not in ("draft", "archive")
+        ]
         scored = [(containment(sh(d), sh(o)), o) for o in cands]
         if scored:
             c, best = max(scored, key=lambda x: x[0])
@@ -309,16 +350,23 @@ def summarize(name, docs):
         tiers[d["tier"]]["files"] += 1
         tiers[d["tier"]]["pages"] += d["pages"]
     return {
-        "room": name, "files": len(docs), "pages": pages(docs),
-        "exact_duplicates": {"files": sum(1 for d in docs if d["duplicate_of"]),
-                             "pages": pages([d for d in docs if d["duplicate_of"]])},
-        "superseded": {"files": sum(1 for d in docs if d["superseded_by"]),
-                       "pages": pages([d for d in docs if d["superseded_by"]])},
+        "room": name,
+        "files": len(docs),
+        "pages": pages(docs),
+        "exact_duplicates": {
+            "files": sum(1 for d in docs if d["duplicate_of"]),
+            "pages": pages([d for d in docs if d["duplicate_of"]]),
+        },
+        "superseded": {
+            "files": sum(1 for d in docs if d["superseded_by"]),
+            "pages": pages([d for d in docs if d["superseded_by"]]),
+        },
         "canonical": {"files": len(canon), "pages": pages(canon)},
         "by_tier": dict(tiers),
         "core_pages": tiers["core"]["pages"],
-        "type_sources": {k: sum(1 for d in docs if d["type_source"].split(":")[0] == k)
-                         for k in ("filename", "folder", "none")},
+        "type_sources": {
+            k: sum(1 for d in docs if d["type_source"].split(":")[0] == k) for k in ("filename", "folder", "none")
+        },
         "with_bookmarks": sum(1 for d in docs if d["structure"]["method"] == "bookmarks"),
         "with_toc": sum(1 for d in docs if d["structure"]["method"].startswith("toc")),
         "with_terms": sum(1 for d in docs if d["structure"]["terms"]),

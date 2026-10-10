@@ -3,6 +3,7 @@
 Every overwrite or delete first copies the current file to gates/.history/, so any change can be restored.
 Files are named <position>_<id>.yaml; the position prefix is the order the pipeline and the UI use.
 """
+
 import ast
 import os
 import re
@@ -84,7 +85,11 @@ def validate(g, own_file=None):
             err.append(f"question {q['id']}: a choice question needs at least two options")
     if len(set(qids)) != len(qids):
         err.append("question ids must be unique")
-    allowed = set(qids) | {f"{q['id']}_p" for q in qs if isinstance(q, dict) and q.get("type") == "choice" and q.get("id")} | CHECK_NAMES
+    allowed = (
+        set(qids)
+        | {f"{q['id']}_p" for q in qs if isinstance(q, dict) and q.get("type") == "choice" and q.get("id")}
+        | CHECK_NAMES
+    )
     rules = g.get("derive") or []
     if not rules:
         err.append("add at least one derive rule")
@@ -104,7 +109,9 @@ def validate(g, own_file=None):
             continue
         bad = sorted({n.id for n in ast.walk(tree) if isinstance(n, ast.Name)} - allowed - {"True", "False", "None"})
         if bad:
-            err.append(f"rule {i}: unknown name {', '.join(bad)}; use question ids{', total_pct' if CHECK_NAMES else ''}")
+            err.append(
+                f"rule {i}: unknown name {', '.join(bad)}; use question ids{', total_pct' if CHECK_NAMES else ''}"
+            )
         if any(isinstance(n, (ast.Call, ast.Attribute, ast.Lambda, ast.Subscript)) for n in ast.walk(tree)):
             err.append(f"rule {i}: only comparisons, and/or/not and literals are allowed")
     if rules and isinstance(rules[-1], dict) and rules[-1].get("if") is not None:
@@ -222,8 +229,17 @@ def history(name=None):
         if name and stem != Path(name).stem and stem.split("_", 1)[-1] != Path(name).stem.split("_", 1)[-1]:
             continue
         g = yaml.safe_load(p.read_text()) or {}
-        out.append({"file": p.name, "gate_file": stem + ".yaml", "id": g.get("id"), "version": g.get("version"),
-                    "stamp": stamp, "reason": reason, "text": p.read_text()})
+        out.append(
+            {
+                "file": p.name,
+                "gate_file": stem + ".yaml",
+                "id": g.get("id"),
+                "version": g.get("version"),
+                "stamp": stamp,
+                "reason": reason,
+                "text": p.read_text(),
+            }
+        )
     return out
 
 
@@ -237,6 +253,10 @@ def restore(hist_file):
     if live:
         # A restore is a new version, never a step back, so run records stay unambiguous.
         nxt = int((yaml.safe_load(live.read_text()) or {}).get("version") or 0) + 1
-        text = re.sub(r"(?m)^version:\s*\d+", f"version: {nxt}", text, count=1) if re.search(r"(?m)^version:", text) else _dump({**g, "version": nxt})
+        text = (
+            re.sub(r"(?m)^version:\s*\d+", f"version: {nxt}", text, count=1)
+            if re.search(r"(?m)^version:", text)
+            else _dump({**g, "version": nxt})
+        )
         return update(live.name, {"text": text})
     return create({"text": text})

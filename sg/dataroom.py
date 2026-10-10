@@ -1,4 +1,5 @@
 """Load a data room index (_index/pages.jsonl) and retrieve pages for a gate."""
+
 import json
 import re
 from pathlib import Path

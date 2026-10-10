@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Local analyst console. [PORT=8765] python3 server.py [data-root] -> http://127.0.0.1:8765"""
+
 import collections
 import json
 import mimetypes
@@ -25,7 +26,9 @@ LOG = collections.deque(maxlen=1000)  # in-memory event log, newest last
 WEB = ROOT / "web"
 RUNS = ROOT / "runs"
 
-DATA_ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else os.environ.get("RWP_DATA_ROOT", str(Path.home() / "Desktop/RWP"))).resolve()
+DATA_ROOT = Path(
+    sys.argv[1] if len(sys.argv) > 1 else os.environ.get("RWP_DATA_ROOT", str(Path.home() / "Desktop/RWP"))
+).resolve()
 slug = lambda n: re.sub(r"[^\w.-]+", "_", n)
 mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("text/markdown", ".md")
@@ -114,13 +117,21 @@ def merged_listing(v):
                 e["mtime"] = max(e["mtime"], st.st_mtime)
                 e["room"] = e["room"] or room
                 continue
-            entries[c.name] = {"name": c.name, "dir": c.is_dir(), "size": st.st_size, "mtime": st.st_mtime,
-                               "path": f"{v}/{c.name}" if v else c.name,
-                               "real": str(c.relative_to(DATA_ROOT)), "room": room, "parts": 1}
+            entries[c.name] = {
+                "name": c.name,
+                "dir": c.is_dir(),
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+                "path": f"{v}/{c.name}" if v else c.name,
+                "real": str(c.relative_to(DATA_ROOT)),
+                "room": room,
+                "parts": 1,
+            }
     return sorted(entries.values(), key=lambda e: (not e["dir"], e["name"].lower()))
 
 
 # ---------- pipeline (tables in PIPELINE.md, read-only) ----------
+
 
 def parse_pipeline():
     src = next(iter(sorted(DATA_ROOT.rglob("PIPELINE.md"))), None)
@@ -141,8 +152,11 @@ def parse_pipeline():
         else:
             header = None
     upd = re.search(r"Last updated:\s*(\S+)", text)
-    return {"source": str(src.relative_to(DATA_ROOT)), "updated": upd and upd.group(1),
-            "sections": [s for s in sections if s["rows"]]}
+    return {
+        "source": str(src.relative_to(DATA_ROOT)),
+        "updated": upd and upd.group(1),
+        "sections": [s for s in sections if s["rows"]],
+    }
 
 
 def match_pipeline(name, rows):
@@ -184,15 +198,24 @@ def search(q, rooms, limit=80):
             t = p["text"].lower()
             if all(term in t for term in terms):
                 i = t.find(terms[0])
-                snip = re.sub(r"\s+", " ", p["text"][max(0, i - 120): i + 200]).strip()
-                out.append({"fund": fid, "room": folder.name, "file": p["file"], "page": p["page"],
-                            "path": str((folder / p["file"]).relative_to(DATA_ROOT)),
-                            "snippet": snip, "score": sum(t.count(term) for term in terms)})
+                snip = re.sub(r"\s+", " ", p["text"][max(0, i - 120) : i + 200]).strip()
+                out.append(
+                    {
+                        "fund": fid,
+                        "room": folder.name,
+                        "file": p["file"],
+                        "page": p["page"],
+                        "path": str((folder / p["file"]).relative_to(DATA_ROOT)),
+                        "snippet": snip,
+                        "score": sum(t.count(term) for term in terms),
+                    }
+                )
     out.sort(key=lambda r: -r["score"])
     return out[:limit]
 
 
 # ---------- analytics over every logged run ----------
+
 
 def all_runs():
     out = []
@@ -215,17 +238,30 @@ def analytics():
             g = read_json(gp) or {}
             b = g.get("brief") or {}
             usage = ((g.get("answers") or {}).get("_meta") or {}).get("usage") or {}
-            steps = {e["step"]: round((e["end"] if e["end"] is not None else e["start"]) - e["start"], 3)
-                     for e in g.get("timeline") or []}
-            rows.append({"fund": s["fund"], "fund_id": s["fund_id"], "run": s["run"],
-                         "extractor": s.get("extractor"), "judge": s.get("judge"),
-                         "gate": g.get("gate", gp.stem), "result": g.get("result"),
-                         "review": bool(g.get("review")), "min_confidence": g.get("min_confidence"),
-                         "facts": len(b.get("facts") or []), "rejected": len(g.get("rejected") or []),
-                         "not_found": len(b.get("not_found") or []),
-                         "pages_offered": len(g.get("pages_offered") or []),
-                         "tokens_in": usage.get("input_tokens", 0), "tokens_out": usage.get("output_tokens", 0),
-                         "steps": steps})
+            steps = {
+                e["step"]: round((e["end"] if e["end"] is not None else e["start"]) - e["start"], 3)
+                for e in g.get("timeline") or []
+            }
+            rows.append(
+                {
+                    "fund": s["fund"],
+                    "fund_id": s["fund_id"],
+                    "run": s["run"],
+                    "extractor": s.get("extractor"),
+                    "judge": s.get("judge"),
+                    "gate": g.get("gate", gp.stem),
+                    "result": g.get("result"),
+                    "review": bool(g.get("review")),
+                    "min_confidence": g.get("min_confidence"),
+                    "facts": len(b.get("facts") or []),
+                    "rejected": len(g.get("rejected") or []),
+                    "not_found": len(b.get("not_found") or []),
+                    "pages_offered": len(g.get("pages_offered") or []),
+                    "tokens_in": usage.get("input_tokens", 0),
+                    "tokens_out": usage.get("output_tokens", 0),
+                    "steps": steps,
+                }
+            )
     return rows
 
 
@@ -268,8 +304,13 @@ class H(BaseHTTPRequestHandler):
             self.send({"error": f"{type(e).__name__}: {e}"}, code=500)
         path = urlparse(self.path).path
         if path.startswith("/api/") and not path.startswith(("/api/job/", "/api/logs")):
-            log("http", f"GET {unquote(self.path)}", "warn" if self._code >= 400 else "info",
-                status=self._code, ms=round(1000 * (time.time() - t0)))
+            log(
+                "http",
+                f"GET {unquote(self.path)}",
+                "warn" if self._code >= 400 else "info",
+                status=self._code,
+                ms=round(1000 * (time.time() - t0)),
+            )
 
     def route_get(self):
         u = urlparse(self.path)
@@ -288,11 +329,19 @@ class H(BaseHTTPRequestHandler):
             for fid, folder in sorted(rooms.items()):
                 rs = runs_for(fid)
                 rel = folder.relative_to(DATA_ROOT)
-                out.append({"id": fid, "name": folder.name, "path": str(rel), "vpath": to_virtual(str(rel)),
-                            "stage": next((p for p in rel.parts if re.match(r"\d-", p)), None),
-                            "runs": rs, "latest": read_json(RUNS / fid / rs[0] / "summary.json") if rs else None,
-                            "catalog": read_json(ROOT / "catalog" / fid / "summary.json"),
-                            "pipeline": match_pipeline(folder.name, pipe)})
+                out.append(
+                    {
+                        "id": fid,
+                        "name": folder.name,
+                        "path": str(rel),
+                        "vpath": to_virtual(str(rel)),
+                        "stage": next((p for p in rel.parts if re.match(r"\d-", p)), None),
+                        "runs": rs,
+                        "latest": read_json(RUNS / fid / rs[0] / "summary.json") if rs else None,
+                        "catalog": read_json(ROOT / "catalog" / fid / "summary.json"),
+                        "pipeline": match_pipeline(folder.name, pipe),
+                    }
+                )
             return self.send(out)
         if parts == ["api", "runs"]:
             return self.send(all_runs())
@@ -302,27 +351,57 @@ class H(BaseHTTPRequestHandler):
             return self.send(parse_pipeline())
         if parts == ["api", "agent"]:
             out = monitor.report()
-            out["jobs"] = [{"id": k, "fund": j["fund"], "fund_id": j["fund_id"], "status": j["status"],
-                            "started": j["started"], "extractor": j["extractor"], "judge": j["judge"],
-                            "elapsed": round(time.time() - j["tr"].t0, 1) if j["status"] == "running" else j.get("seconds"),
-                            "run": j.get("run"), "error": j.get("error"), "steps": list(j["tr"].steps)} for k, j in JOBS.items()][::-1]
+            out["jobs"] = [
+                {
+                    "id": k,
+                    "fund": j["fund"],
+                    "fund_id": j["fund_id"],
+                    "status": j["status"],
+                    "started": j["started"],
+                    "extractor": j["extractor"],
+                    "judge": j["judge"],
+                    "elapsed": round(time.time() - j["tr"].t0, 1) if j["status"] == "running" else j.get("seconds"),
+                    "run": j.get("run"),
+                    "error": j.get("error"),
+                    "steps": list(j["tr"].steps),
+                }
+                for k, j in JOBS.items()
+            ][::-1]
             return self.send(out)
         if parts == ["api", "gates", "history"]:
             return self.send(gate_store.history(qs.get("file", [None])[0]))
         if parts == ["api", "config"]:
-            gates = [{"file": p.name, "text": p.read_text(), "parsed": yaml.safe_load(p.read_text())}
-                     for p in gate_store.files()]
+            gates = [
+                {"file": p.name, "text": p.read_text(), "parsed": yaml.safe_load(p.read_text())}
+                for p in gate_store.files()
+            ]
             pol = (ROOT / "policy.yaml").read_text()
             return self.send({"gates": gates, "policy": {"text": pol, "parsed": yaml.safe_load(pol)}})
         if parts == ["api", "logs"]:
-            jobs = [{"id": k, "fund": j["fund"], "fund_id": j["fund_id"], "status": j["status"], "started": j["started"],
-                     "extractor": j["extractor"], "judge": j["judge"],
-                     "elapsed": round(time.time() - j["tr"].t0, 1) if j["status"] == "running" else j.get("seconds"),
-                     "run": j.get("run"), "error": j.get("error")} for k, j in JOBS.items()]
+            jobs = [
+                {
+                    "id": k,
+                    "fund": j["fund"],
+                    "fund_id": j["fund_id"],
+                    "status": j["status"],
+                    "started": j["started"],
+                    "extractor": j["extractor"],
+                    "judge": j["judge"],
+                    "elapsed": round(time.time() - j["tr"].t0, 1) if j["status"] == "running" else j.get("seconds"),
+                    "run": j.get("run"),
+                    "error": j.get("error"),
+                }
+                for k, j in JOBS.items()
+            ]
             return self.send({"events": list(LOG), "jobs": jobs[::-1]})
         if parts == ["api", "meta"]:
-            return self.send({"data_root": str(DATA_ROOT), "rooms": len(rooms),
-                              "running": sum(j["status"] == "running" for j in JOBS.values())})
+            return self.send(
+                {
+                    "data_root": str(DATA_ROOT),
+                    "rooms": len(rooms),
+                    "running": sum(j["status"] == "running" for j in JOBS.values()),
+                }
+            )
         if parts == ["api", "search"]:
             fund = qs.get("fund", [None])[0]
             return self.send(search(qs.get("q", [""])[0], {fund: rooms[fund]} if fund in rooms else rooms))
@@ -330,8 +409,14 @@ class H(BaseHTTPRequestHandler):
             v = to_virtual(qs.get("path", [""])[0].strip("/"))
             if v and not any(d.is_dir() for d in real_candidates(v)):
                 return self.send({"error": "not a folder"}, code=404)
-            return self.send({"path": v, "root": layers()[0].name if len(layers()) > 1 else DATA_ROOT.name,
-                              "parts": len(layers()), "entries": merged_listing(v)})
+            return self.send(
+                {
+                    "path": v,
+                    "root": layers()[0].name if len(layers()) > 1 else DATA_ROOT.name,
+                    "parts": len(layers()),
+                    "entries": merged_listing(v),
+                }
+            )
         if parts == ["api", "raw"]:
             p = self.data_path(qs)
             if p is None or not p.is_file():
@@ -339,8 +424,7 @@ class H(BaseHTTPRequestHandler):
             ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
             if ctype.startswith("text/") or p.suffix.lower() in TEXT_EXT:
                 ctype = "text/plain; charset=utf-8"
-            return self.send(p.read_bytes(), ctype,
-                             extra={"Content-Disposition": f'inline; filename="{slug(p.name)}"'})
+            return self.send(p.read_bytes(), ctype, extra={"Content-Disposition": f'inline; filename="{slug(p.name)}"'})
         if parts == ["api", "filepages"]:
             p = self.data_path(qs)
             if p is None:
@@ -360,15 +444,28 @@ class H(BaseHTTPRequestHandler):
             gates = [json.loads(p.read_text()) for p in sorted((base / "gates").glob("*.json"))]
             md = base / "summary.md"
             room = rooms.get(fid)
-            return self.send({"summary": summary, "gates": gates, "markdown": md.read_text() if md.exists() else "",
-                              "room_path": str(room.relative_to(DATA_ROOT)) if room else None})
+            return self.send(
+                {
+                    "summary": summary,
+                    "gates": gates,
+                    "markdown": md.read_text() if md.exists() else "",
+                    "room_path": str(room.relative_to(DATA_ROOT)) if room else None,
+                }
+            )
         if parts[:2] == ["api", "job"] and len(parts) == 3:
             j = JOBS.get(parts[2])
             if not j:
                 return self.send({"error": "unknown job"}, code=404)
-            return self.send({"status": j["status"], "run": j.get("run"), "error": j.get("error"),
-                              "elapsed": round(time.time() - j["tr"].t0, 2),
-                              "gates": j["gates"], "steps": list(j["tr"].steps)})
+            return self.send(
+                {
+                    "status": j["status"],
+                    "run": j.get("run"),
+                    "error": j.get("error"),
+                    "elapsed": round(time.time() - j["tr"].t0, 2),
+                    "gates": j["gates"],
+                    "steps": list(j["tr"].steps),
+                }
+            )
         if parts[:2] == ["api", "catalog"] and len(parts) == 3:
             folder = rooms.get(parts[2])
             if not folder:
@@ -378,8 +475,13 @@ class H(BaseHTTPRequestHandler):
                 log("catalog", f"building catalog for {folder.name}")
                 build_catalog(folder)
             docs = [json.loads(line) for line in (base / "documents.jsonl").open()]
-            return self.send({"summary": json.loads((base / "summary.json").read_text()), "docs": docs,
-                              "room_path": str(folder.relative_to(DATA_ROOT))})
+            return self.send(
+                {
+                    "summary": json.loads((base / "summary.json").read_text()),
+                    "docs": docs,
+                    "room_path": str(folder.relative_to(DATA_ROOT)),
+                }
+            )
         if parts[:2] == ["api", "history"] and len(parts) == 3:
             rows = []
             for stamp in sorted(runs_for(parts[2])[::-1]):
@@ -450,8 +552,16 @@ class H(BaseHTTPRequestHandler):
             return self.send({"error": "unknown fund"}, code=404)
         tr = Tracker()
         ex, jd = body.get("extractor", "claude"), body.get("judge", "jev")
-        job = {"status": "running", "tr": tr, "gates": [g["id"] for g in load_gates()],
-               "fund": folder.name, "fund_id": body["fund"], "extractor": ex, "judge": jd, "started": time.time()}
+        job = {
+            "status": "running",
+            "tr": tr,
+            "gates": [g["id"] for g in load_gates()],
+            "fund": folder.name,
+            "fund_id": body["fund"],
+            "extractor": ex,
+            "judge": jd,
+            "started": time.time(),
+        }
         jid = uuid.uuid4().hex[:10]
         JOBS[jid] = job
         log("job", f"screen started: {folder.name} (extractor {ex}, judge {jd})", job=jid)
