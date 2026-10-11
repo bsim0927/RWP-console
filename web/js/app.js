@@ -128,7 +128,7 @@ function initOmni() {
     const funds = await cached('funds');
     const hits = funds.filter(f => f.name.toLowerCase().includes(v)).slice(0, 7);
     items = [
-      ...hits.map(f => ({ href: `#/fund/${encodeURIComponent(f.id)}`, html: `<span class="dot ${dispTone(f.latest?.disposition)}"></span><span>${esc(f.name)}</span><span class="sp"></span><span class="dim" style="font-size:11px">${esc(f.pipeline?.Status || '')}</span>` })),
+      ...hits.map(f => ({ href: `#/fund/${encodeURIComponent(f.id)}`, html: `<span class="dot ${dispTone(f.latest?.disposition)}"></span><span>${esc(f.name)}</span><span class="sp"></span><span class="dim" style="font-size:11px">${esc(f.status?.status || '')}</span>` })),
       { href: `#/search?${q({ q: inp.value.trim() })}`, html: `<sl-icon name="search"></sl-icon><span>Search all documents for <b>${esc(inp.value.trim())}</b></span><span class="sp"></span><kbd>Enter</kbd>` },
     ];
     sel = hits.length ? 0 : items.length - 1;

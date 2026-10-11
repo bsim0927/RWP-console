@@ -1,5 +1,5 @@
 import {
-  $, $$, api, cached, bust, esc, n, pct, ago, fmtDT, stampDate, gateName, sortGates, resultChip, flagChips, clockChip, decisionChip, day, fmtDate, resultTone, resultIcon, dispChip, dispTone, dispIcon, dispShort, dispNote,
+  PIPE_ORDER, $, $$, api, cached, bust, esc, n, pct, ago, fmtDT, stampDate, gateName, sortGates, resultChip, flagChips, clockChip, decisionChip, day, fmtDate, resultTone, resultIcon, dispChip, dispTone, dispIcon, dispShort, dispNote,
   pipeChip, splitName, initials, waterfall, stepMatrix, lineChart, legend, hbars, markdown, openPreview, empty, skeleton, TIERS, TIER_COL, gateColor, GATE_ORDER, toast,
 } from '../lib.js';
 import { setCrumbs, screenDialog, jobs, onJobs } from '../app.js';
@@ -17,8 +17,8 @@ export async function render(el, r) {
   let funds = await cached('funds');
   let fund = funds.find(f => f.id === id);
   if (!fund) { el.innerHTML = `<div class="page">${empty('question-circle', 'Unknown fund', esc(id))}</div>`; return; }
-  const s = splitName(fund.name), p = fund.pipeline || {}, it = fund.intake || {};
-  const owner = it.owner || p.Owner;
+  const s = splitName(fund.name), st = fund.status || {}, it = fund.intake || {}, act = fund.actions || {};
+  const owner = it.owner;
   const dt = v => (v ? fmtDate(day(v)) : '–');
   setCrumbs([['Screening', '#/screening'], [fund.name]]);
   runId = runId || fund.runs[0] || null;
@@ -26,8 +26,8 @@ export async function render(el, r) {
 
   el.innerHTML = `<div class="page">
     <div class="fund-hd"><div class="av">${esc(initials(s.manager))}</div>
-      <div style="min-width:0"><div class="eyebrow">${esc(fund.stage || 'Data room')}</div><h1>${esc(s.manager)}</h1>
-        <div class="meta"><span>${esc(p.Strategy || s.strategy || '')}</span>${pipeChip(p.Status)}${owner ? `<span class="chip ghost"><sl-icon name="person"></sl-icon>${esc(owner)}</span>` : ''}${clockChip(fund.clock)}
+      <div style="min-width:0"><div class="eyebrow">Data room</div><h1>${esc(s.manager)}</h1>
+        <div class="meta"><span>${esc(s.strategy || '')}</span>${pipeChip(st.status)}${owner ? `<span class="chip ghost"><sl-icon name="person"></sl-icon>${esc(owner)}</span>` : ''}${clockChip(fund.clock)}
         ${fund.catalog ? `<span class="chip ghost"><sl-icon name="files"></sl-icon>${n(fund.catalog.files)} files · ${n(fund.catalog.pages)} pages</span>` : ''}</div></div>
       <div class="act"><a class="ghost-btn" href="#/files?path=${encodeURIComponent(fund.vpath)}"><sl-icon name="folder2-open"></sl-icon>Open folder</a>
         <button class="glow-btn" id="run"><sl-icon name="play-fill"></sl-icon>Run screen</button></div></div>
@@ -39,9 +39,11 @@ export async function render(el, r) {
       <div><div class="k">Filed</div><div class="v">${dt(it.filed_on)}</div></div>
       <div><div class="k">Screen due</div><div class="v">${fund.clock ? dt(fund.clock.due) : '–'}</div></div>
       <div><div class="k">Sponsor deadline</div><div class="v">${dt(it.sponsor_deadline)}</div></div></div></div>
-    ${fund.pipeline ? `<div class="card" style="margin-bottom:16px"><div class="facts3">
-      <div><div class="k">${p['Last action'] != null ? 'Last action' : 'Material on file'}</div><div class="v">${esc(p['Last action'] ?? p['Material on file'] ?? '–')}</div></div>
-      <div style="grid-column:span 2"><div class="k">Next action</div><div class="v">${esc(p['Next action'] || '–')}</div></div></div></div>` : ''}
+    <div class="card" style="margin-bottom:16px" id="standing"><div class="hd"><h2 class="sec">Pipeline</h2>${pipeChip(st.status)}<span class="sec-sub">${st.source === 'console' ? `set by ${esc(st.reviewer)} · ${fmtDT(st.at)}` : st.source === 'import' ? 'imported from the old pipeline file' : 'not yet set'}</span><span class="sp"></span>
+      <button class="ghost-btn sm" id="status-edit"><sl-icon name="signpost-split"></sl-icon>Change status</button></div><div class="facts3">
+      <div><div class="k">Last action</div><div class="v">${esc(act.last || '–')}</div></div>
+      <div><div class="k">Next action</div><div class="v">${esc(act.next || '–')}</div></div>
+      <div><div class="k">Material on file</div><div class="v">${dt(fund.material_on)}</div></div></div></div>
     <sl-tab-group class="tabs" id="tabs">${TABS.map(([k, label, icon]) => `<sl-tab slot="nav" panel="${k}" ${k === tab ? 'active' : ''}><sl-icon name="${icon}" style="margin-right:7px"></sl-icon>${label}${k === 'history' && fund.runs.length ? `<span class="dim" style="margin-left:6px">${fund.runs.length}</span>` : ''}</sl-tab>`).join('')}
       ${TABS.map(([k]) => `<sl-tab-panel name="${k}"><div id="p-${k}"></div></sl-tab-panel>`).join('')}</sl-tab-group></div>`;
 
@@ -62,6 +64,7 @@ export async function render(el, r) {
   $('#tabs', el).addEventListener('sl-tab-show', e => show(e.detail.name));
   $('#run', el).addEventListener('click', () => screenDialog(fund));
   $('#intake-edit', el).addEventListener('click', () => intakeDialog(fund, async () => { bust('funds'); await render(el, r); }));
+  $('#status-edit', el).addEventListener('click', () => statusDialog(fund, async () => { bust('funds'); await render(el, r); }));
 
   // ---------- screen ----------
   let data = null;
@@ -374,4 +377,28 @@ function marketingCard(sm) {
   return `<div class="card" id="marketing"><div class="hd"><h2 class="sec">Marketing against filed documents</h2><span class="sec-sub">${found.length} contradicted · always a finding</span></div><div class="bd">
     ${sm.marketing_check_error ? `<p class="muted" style="margin-top:0">The check did not run: ${esc(sm.marketing_check_error)}</p>` : ''}
     ${found.map(c => `<div class="mk-row"><div style="font-weight:600;margin-bottom:6px">${esc(c.topic)} <span class="dim" style="font-weight:400">· ${esc(c.summary)}</span></div><div class="mk-pair">${side('Marketing', c.marketing)}${side('Filed', c.filed)}</div></div>`).join('')}</div></div>`;
+}
+
+// Pipeline status (decision G3): only the CIO moves it, and every move is kept with its note.
+async function statusDialog(fund, done) {
+  const [me, hist] = await Promise.all([currentReviewer(), api('status/' + encodeURIComponent(fund.id))]);
+  const d = document.createElement('sl-dialog');
+  d.label = 'Pipeline status';
+  const cio = me?.role === 'cio';
+  d.innerHTML = `<div style="display:flex;flex-direction:column;gap:12px">
+    ${cio ? '' : `<sl-alert variant="warning" open><sl-icon slot="icon" name="lock"></sl-icon>Only the CIO moves a fund's status. You are reviewing as ${esc(me?.name || 'nobody')}.</sl-alert>`}
+    <label class="dim" style="font-size:12px">Status<select class="fi" id="ps-status" ${cio ? '' : 'disabled'}>${PIPE_ORDER.map(x => `<option ${x === fund.status?.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
+    <label class="dim" style="font-size:12px">Note<input class="fi" id="ps-note" placeholder="Why it moves (optional)" ${cio ? '' : 'disabled'}></label>
+    ${hist.length ? `<div class="eyebrow">History</div><table class="t compact">${hist.map(h => `<tr><td>${pipeChip(h.status)}</td><td class="wrap dim" style="font-size:12px">${esc(h.source === 'import' ? 'Imported' : h.reviewer)} · ${fmtDT(h.at)}${h.note ? `<div>${esc(h.note)}</div>` : ''}</td></tr>`).join('')}</table>` : ''}</div>
+    <div slot="footer" style="display:flex;gap:8px;justify-content:flex-end"><button class="ghost-btn" data-x>Cancel</button><button class="glow-btn" data-go ${cio ? '' : 'disabled'}><sl-icon name="check-lg"></sl-icon>Save status</button></div>`;
+  document.body.append(d);
+  d.addEventListener('sl-after-hide', e => { if (e.target === d) d.remove(); });
+  d.querySelector('[data-x]').onclick = () => d.hide();
+  d.querySelector('[data-go]').onclick = async () => {
+    try {
+      await api('status', { method: 'POST', body: JSON.stringify({ fund: fund.id, status: $('#ps-status', d).value, note: $('#ps-note', d).value, reviewer: me?.id }) });
+      d.hide(); toast('Status saved', 'good'); done();
+    } catch (e) { toast(esc(e.message), 'crit'); }
+  };
+  customElements.whenDefined('sl-dialog').then(() => requestAnimationFrame(() => d.show()));
 }

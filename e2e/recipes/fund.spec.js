@@ -92,3 +92,17 @@ test('documents that disagree are findings, with both sources cited', async ({ p
   await disagree.locator('.cite').last().click();
   await expect(page.locator('#drawer .chip', { hasText: 'Page 1' })).toBeVisible();
 });
+
+test('the CIO moves a fund\'s status, and the move is kept', async ({ page }) => {
+  await open(page, fundUrl(FUNDS.bluefield), FUNDS.bluefield.manager);
+  const standing = page.locator('#standing');
+  await expect(standing).toContainText('Covered');
+  await expect(standing).toContainText('imported from the old pipeline file');
+  await standing.locator('#status-edit').click();
+  const dialog = page.locator('sl-dialog[label="Pipeline status"]');
+  await dialog.locator('#ps-status').selectOption('Watch');
+  await dialog.locator('#ps-note').fill('Annual review flagged a key person change');
+  await dialog.locator('[data-go]').click();
+  await expect(page.locator('#standing')).toContainText('Watch');
+  await expect(page.locator('#standing')).toContainText('set by CIO');
+});

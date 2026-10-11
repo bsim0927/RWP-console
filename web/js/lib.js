@@ -106,7 +106,7 @@ export const dispIcon = d => DISP_ICON[dispTone(d)];
 const DECISION = { draft: ['ghost', 'pencil-square', 'Draft'], confirmed: ['good', 'patch-check', 'Confirmed'], awaiting_signoff: ['warn', 'hourglass-split', 'Awaiting CIO sign-off'], signed_off: ['good', 'patch-check', 'Signed off'] };
 export const decisionChip = d => { if (!d) return ''; const [t, icon, label] = DECISION[d.state] || DECISION.draft; return `<span class="chip ${t}"><sl-icon name="${icon}"></sl-icon>${label}</span>`; };
 
-// Pipeline statuses from PIPELINE.md, in process order.
+// Pipeline statuses (sg/fund_status.STATUSES), in process order. Only the CIO moves them.
 export const PIPE_ORDER = ['Not reviewed', 'Triaged', 'Under review', 'Deep DD', 'IC ready', 'Covered', 'Watch', 'Reviewed and not covered'];
 const PIPE_TONE = { 'Not reviewed': 'none', Triaged: 'ghost', 'Under review': 'warn', 'Deep DD': 'accent', 'IC ready': 'accent', Covered: 'good', Watch: 'serious', 'Reviewed and not covered': 'crit' };
 const PIPE_ICON = { 'Not reviewed': 'inbox', Triaged: 'list-check', 'Under review': 'hourglass-split', 'Deep DD': 'search', 'IC ready': 'people', Covered: 'shield-check', Watch: 'eye', 'Reviewed and not covered': 'slash-circle' };
