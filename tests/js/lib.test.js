@@ -89,6 +89,12 @@ describe('paths', () => {
 });
 
 describe('markdown', () => {
+  it('renders numbered lists, as the screen note request list uses', () => {
+    const html = markdown('Asks:\n\n1. The fee schedule\n2. The valuation policy\n\nDone.');
+    expect(html).toContain('<ol><li>The fee schedule</li><li>The valuation policy</li></ol>');
+    expect(html).toContain('<p>Done.</p>');
+  });
+
   it('renders headings, emphasis, code and lists', () => {
     const html = markdown('# Title\n\nSome **bold** and *em* and `code`.\n\n- one\n- two');
     expect(html).toContain('<h1>Title</h1>');

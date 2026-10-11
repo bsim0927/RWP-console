@@ -126,6 +126,17 @@ def run(fund_id, stamp):
     return {"summary": head["summary"], "gates": [g["record"] for g in gates], "markdown": head["report_md"]}
 
 
+def run_gate_yaml(fund_id, stamp):
+    """{gate_id: the gate definition the run used}."""
+    with db.tx() as c:
+        rows = c.execute(
+            """select g.gate_id, g.gate_yaml from run_gates g join runs r on r.id = g.run_id
+               where r.fund_id = %s and r.stamp = %s order by g.position""",
+            (fund_id, stamp),
+        ).fetchall()
+    return {r["gate_id"]: r["gate_yaml"] for r in rows}
+
+
 def runs_with_gates():
     """Every run, oldest first, as {fund_id, summary, gates: [records]}, for analytics and monitoring."""
     with db.tx() as c:

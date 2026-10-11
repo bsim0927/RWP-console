@@ -289,9 +289,10 @@ export function markdown(src) {
       out += `<div class="tbl-wrap"><table><tr>${cells(rows[0]).map(c => `<th>${inline(c)}</th>`).join('')}</tr>${body.map(r => `<tr>${cells(r).map(c => `<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</table></div>`; continue;
     }
     if (/^\s*[-*] /.test(l)) { out += '<ul>'; while (i < lines.length && /^\s*[-*] /.test(lines[i])) out += `<li>${inline(lines[i++].replace(/^\s*[-*] /, ''))}</li>`; out += '</ul>'; continue; }
+    if (/^\s*\d+\. /.test(l)) { out += '<ol>'; while (i < lines.length && /^\s*\d+\. /.test(lines[i])) out += `<li>${inline(lines[i++].replace(/^\s*\d+\. /, ''))}</li>`; out += '</ol>'; continue; }
     if (/^---+$/.test(l.trim())) { out += '<hr>'; i++; continue; }
     if (!l.trim()) { i++; continue; }
-    const para = []; while (i < lines.length && lines[i].trim() && !/^(#|\||\s*[-*] |---)/.test(lines[i])) para.push(lines[i++]);
+    const para = []; while (i < lines.length && lines[i].trim() && !/^(#|\||\s*[-*] |\s*\d+\. |---)/.test(lines[i])) para.push(lines[i++]);
     out += `<p>${inline(para.join(' '))}</p>`;
   }
   return `<div class="md">${out}</div>`;

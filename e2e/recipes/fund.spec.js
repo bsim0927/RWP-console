@@ -40,7 +40,7 @@ test('a citation opens the source PDF at the cited page', async ({ page }) => {
 
 test('every tab renders for a screened fund', async ({ page }) => {
   await open(page, fundUrl(FUNDS.northwind), FUNDS.northwind.manager);
-  for (const tab of ['catalog', 'files', 'search', 'history', 'report']) {
+  for (const tab of ['catalog', 'files', 'search', 'history', 'note', 'report']) {
     await page.locator(`#tabs sl-tab[panel="${tab}"]`).click();
     await expect(page).toHaveURL(new RegExp(`/${tab}(/|$)`));
     await expect(page.locator(`#p-${tab}`)).not.toBeEmpty();

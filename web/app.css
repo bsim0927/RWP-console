@@ -350,7 +350,7 @@ select.fi{appearance:auto}
 .md h1{font-size:19px}.md h2{font-size:16px}.md h3{font-size:14px}
 .md p{margin:8px 0}.md code{font:12px var(--mono);background:var(--s3);padding:1px 5px;border-radius:4px}
 .md table{border-collapse:collapse;margin:12px 0;font-size:12.5px;width:100%}.md th,.md td{border-bottom:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}.md th{color:var(--ink3);font-weight:500}
-.md ul{padding-left:20px}.md strong{color:var(--ink)}.md hr{border:0;border-top:1px solid var(--line);margin:18px 0}
+.md ul,.md ol{padding-left:20px}.md strong{color:var(--ink)}.md hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 
 /* catalog cards */
 .cat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
