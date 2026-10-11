@@ -15,7 +15,10 @@ from . import db
 ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,48}$")
 FILE_RE = re.compile(r"^(\d+)_([a-z][a-z0-9_]*)\.yaml$")
 QTYPES = ("bool", "choice")
-CHECK_NAMES = {"total_pct"}  # names code_checks() adds to the rule environment
+CHECK_NAMES = ("total_pct", "fees_disagree")  # names code_checks() adds to the rule environment
+# Every gate answers in the same words; anything a fund needs beyond them (QP-only, an affiliated
+# administrator) is a flag, so dispositions, charts and the screen note never learn per-gate results.
+RESULTS = ("Pass", "Fail", "Incomplete")
 
 
 class GateError(ValueError):
@@ -112,7 +115,7 @@ def validate(g, own_file=None):
     allowed = (
         set(qids)
         | {f"{q['id']}_p" for q in qs if isinstance(q, dict) and q.get("type") == "choice" and q.get("id")}
-        | CHECK_NAMES
+        | set(CHECK_NAMES)
     )
     rules = g.get("derive") or []
     if not rules:
@@ -121,29 +124,42 @@ def validate(g, own_file=None):
         if not isinstance(r, dict) or not str(r.get("then", "")).strip():
             err.append(f"rule {i} needs a result")
             continue
-        cond = r.get("if")
-        if cond is None:
+        if r["then"] not in RESULTS:
+            err.append(f"rule {i}: the result must be Pass, Fail or Incomplete; say anything more with a flag")
+        if r.get("if") is None:
             if i < len(rules):
                 warn.append(f"rule {i} has no condition, so the rules after it never run")
             continue
-        try:
-            tree = ast.parse(str(cond), mode="eval")
-        except SyntaxError as e:
-            err.append(f"rule {i}: condition is not valid ({e.msg})")
-            continue
-        bad = sorted({n.id for n in ast.walk(tree) if isinstance(n, ast.Name)} - allowed - {"True", "False", "None"})
-        if bad:
-            err.append(
-                f"rule {i}: unknown name {', '.join(bad)}; use question ids{', total_pct' if CHECK_NAMES else ''}"
-            )
-        if any(isinstance(n, (ast.Call, ast.Attribute, ast.Lambda, ast.Subscript)) for n in ast.walk(tree)):
-            err.append(f"rule {i}: only comparisons, and/or/not and literals are allowed")
+        err += _condition_errors(f"rule {i}", r["if"], allowed)
+    flags = g.get("flags") or []
+    if not isinstance(flags, list):
+        err.append("flags must be a list")
+        flags = []
+    for i, f in enumerate(flags, 1):
+        if not isinstance(f, dict) or not str(f.get("flag", "")).strip():
+            err.append(f"flag {i} needs its text")
+        elif f.get("if") is not None:
+            err += _condition_errors(f"flag {i}", f["if"], allowed)
     if rules and isinstance(rules[-1], dict) and rules[-1].get("if") is not None:
         warn.append("the last rule has a condition; a gate that matches nothing returns Incomplete")
     dec = (g.get("review_if") or {}).get("decisive")
     if dec and set(dec) - set(qids):
         err.append(f"review_if.decisive names unknown questions: {', '.join(sorted(set(dec) - set(qids)))}")
     return err, warn
+
+
+def _condition_errors(label, cond, allowed):
+    try:
+        tree = ast.parse(str(cond), mode="eval")
+    except SyntaxError as e:
+        return [f"{label}: condition is not valid ({e.msg})"]
+    err = []
+    bad = sorted({n.id for n in ast.walk(tree) if isinstance(n, ast.Name)} - allowed - {"True", "False", "None"})
+    if bad:
+        err.append(f"{label}: unknown name {', '.join(bad)}; use question ids, {', '.join(CHECK_NAMES)}")
+    if any(isinstance(n, (ast.Call, ast.Attribute, ast.Lambda, ast.Subscript)) for n in ast.walk(tree)):
+        err.append(f"{label}: only comparisons, and/or/not and literals are allowed")
+    return err
 
 
 def _parse(text):

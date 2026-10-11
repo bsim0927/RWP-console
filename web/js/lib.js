@@ -56,25 +56,27 @@ export function resultTone(r) {
   if (r === 'Pass') return 'good';
   if (r === 'Fail') return 'crit';
   if (r === 'Incomplete') return 'warn';
-  if (r.startsWith('Route')) return 'serious';
+  if (r.startsWith('Route')) return 'serious'; // runs from before decision B6 dropped this result
   return 'none';
 }
 const RESULT_ICON = { good: 'check-lg', crit: 'x-lg', warn: 'hourglass-split', serious: 'signpost-split', none: 'dash' };
 export const resultIcon = r => RESULT_ICON[resultTone(r)];
-export const RESULT_KEYS = ['Pass', 'Route with disclosure', 'Incomplete', 'Fail', 'Not yet run'];
+export const RESULT_KEYS = ['Pass', 'Incomplete', 'Fail', 'Not yet run'];
 export const toneVar = t => ({ good: 'var(--good)', crit: 'var(--crit)', warn: 'var(--warn)', serious: 'var(--serious)', none: 'var(--none)' }[t]);
 
 export function resultChip(r, review) {
   const t = resultTone(r);
   return `<span class="chip ${t}"><sl-icon name="${RESULT_ICON[t]}"></sl-icon>${esc(r || 'Not run')}</span>${review ? ` <span class="rv-flag" title="Low judge confidence, goes to an analyst"><sl-icon name="person-check"></sl-icon>Review</span>` : ''}`;
 }
+// What a gate wants the analyst to know beyond its result, e.g. QP-only.
+export const flagChips = flags => (flags || []).map(f => `<span class="chip ghost flag"><sl-icon name="flag"></sl-icon>${esc(f)}</span>`).join('');
 // One square per gate, in policy order, with a tooltip.
 export function gateStrip(gates) {
   if (!gates) return '<span class="dim">Not screened</span>';
   return `<span class="gs">${GATE_ORDER.map(g => {
     const x = gates[g] || {};
     const t = resultTone(x.result);
-    return `<i class="${t} ${x.review ? 'rv' : ''}" data-tip="<b>${esc(gateName(g))}</b><br>${esc(x.result || 'No result')}${x.min_confidence != null ? ` <span class=dim>· confidence ${pct(x.min_confidence)}</span>` : ''}${x.review ? '<br><span class=dim>Analyst review</span>' : ''}"><sl-icon name="${RESULT_ICON[t]}"></sl-icon></i>`;
+    return `<i class="${t} ${x.review ? 'rv' : ''}" data-tip="<b>${esc(gateName(g))}</b><br>${esc(x.result || 'No result')}${x.min_confidence != null ? ` <span class=dim>· confidence ${pct(x.min_confidence)}</span>` : ''}${(x.flags || []).map(f => `<br><span class=dim>Flag:</span> ${esc(f)}`).join('')}${x.review ? '<br><span class=dim>Analyst review</span>' : ''}"><sl-icon name="${RESULT_ICON[t]}"></sl-icon></i>`;
   }).join('')}</span>`;
 }
 

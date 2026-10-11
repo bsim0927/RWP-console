@@ -7,8 +7,11 @@ test('screen tab shows a card per gate with its result', async ({ page }) => {
   await open(page, fundUrl(FUNDS.acme), FUNDS.acme.manager);
   const cards = page.locator('#p-screen .gcard');
   await expect(cards).toHaveCount(5);
-  await expect(page.locator('#p-screen .gcard[data-g="investor_eligibility"]')).toContainText('Fail');
-  await expect(page.locator('#p-screen .gcard[data-g="total_annual_cost"]')).toContainText('Route with disclosure');
+  // A QP-only fund passes eligibility and carries the flag (decision A2); cost has no threshold (B1).
+  const eligibility = page.locator('#p-screen .gcard[data-g="investor_eligibility"]');
+  await expect(eligibility).toContainText('Pass');
+  await expect(eligibility).toContainText('QP-only');
+  await expect(page.locator('#p-screen .gcard[data-g="total_annual_cost"]')).toContainText('Pass');
 });
 
 test('gate drawer shows verified facts and the rejected, fabricated quote', async ({ page }) => {

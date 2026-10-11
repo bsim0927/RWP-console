@@ -151,7 +151,7 @@ FACTS: dict[str, dict[str, tuple[str, int, str, str]]] = {
         "minimum_investment": ("Acme REOF II - Term Sheet.pdf", 1, "Minimum commitment: $5,000,000.", "$5,000,000"),
         "exemption": ("Acme REOF II - Term Sheet.pdf", 1, "Section 3(c)(7)", "3(c)(7)"),
         "management_fee": ("Acme REOF II - Term Sheet.pdf", 1, "Management fee: 2.0% of committed capital.", "2.0%"),
-        "admin_expenses": ("Acme REOF II - Term Sheet.pdf", 1, "Fund expenses capped at 1.5% per annum.", "1.5%"),
+        "fund_expenses": ("Acme REOF II - Term Sheet.pdf", 1, "Fund expenses capped at 1.5% per annum.", "1.5%"),
         "incentive_fee": (
             "Acme REOF II - Term Sheet.pdf",
             1,
@@ -273,6 +273,8 @@ def install_stubs():
                 yes = {
                     "sufficient": len(have) >= (1 if gate["id"] == "track_record" else 2),
                     "qp_only": any("qualified purchasers only" in f["quote"] for f in brief["facts"]),
+                    "has_valuation_policy": "valuation_policy" in have,
+                    "fund_level": "net_return" in have,
                 }.get(q["id"], False)
                 # Track record on Northwind is deliberately borderline, so one gate needs analyst review.
                 p = 0.72 if gate["id"] == "track_record" and yes else (0.92 if yes else 0.08)

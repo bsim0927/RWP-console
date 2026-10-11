@@ -3,7 +3,8 @@ import { $, $$, api, bust, esc, gateName, gateColor, setGateOrder, skeleton, toa
 import { setCrumbs } from '../app.js';
 
 const WHEN = { any_review: 'Any gate needs analyst review', any_incomplete: 'Any gate is incomplete or not yet run', any_fail: 'Any gate is not met', otherwise: 'Otherwise' };
-const RESULTS = ['Pass', 'Fail', 'Incomplete', 'Route with disclosure'];
+const RESULTS = ['Pass', 'Fail', 'Incomplete']; // sg/gate_store.RESULTS; anything more is a flag
+const CHECK_NAMES = ['total_pct', 'fees_disagree']; // sg/gate_store.CHECK_NAMES
 const DOC_TYPES = ['terms', 'offering document', 'governing agreement', 'subscription', 'ddq', 'deck', 'track record', 'policies/compliance', 'financial statements'];
 const TEMPLATE = () => ({
   id: 'new_gate', version: 1,
@@ -72,6 +73,7 @@ function gateCard(g, i, total) {
       </div><div>
         <div class="eyebrow">Judge questions</div>${(p.questions || []).map(qq => `<div style="margin-bottom:8px"><span class="mono dim">${esc(qq.id)} · ${esc(qq.type)}${qq.options ? ` · ${esc(qq.options.join(' / '))}` : ''}</span><div>${esc(qq.q)}</div></div>`).join('')}
         <div class="eyebrow" style="margin-top:14px">Derive rules</div>${(p.derive || []).map((d, k) => `<div class="rule" style="padding:6px 0"><span class="i">${k + 1}</span><code>${esc(d.if ?? 'otherwise')}</code><sl-icon name="arrow-right" class="dim"></sl-icon><b style="font-weight:550">${esc(d.then)}</b></div>`).join('')}
+        ${p.flags?.length ? `<div class="eyebrow" style="margin-top:14px">Flags</div>${p.flags.map(f => `<div class="rule" style="padding:6px 0"><sl-icon name="flag" class="dim"></sl-icon><code>${esc(f.if ?? 'always')}</code><sl-icon name="arrow-right" class="dim"></sl-icon><b style="font-weight:550">${esc(f.flag)}</b></div>`).join('')}` : ''}
         <div class="dim" style="font-size:12px;margin-top:8px">Review below confidence ${esc(p.review_if?.min_confidence ?? 0.75)}${p.review_if?.decisive ? ` on ${esc(p.review_if.decisive.join(', '))}` : ''}</div>
       </div></div>`}</div></div>`;
 }
@@ -221,8 +223,8 @@ async function editor(file, parsed, text, done) {
 
   function drawForm() {
     const manual = !!g.static_result;
-    const qs = g.questions || [], fields = g.extractor?.fields || [], rules = g.derive || [];
-    const names = [...qs.map(q => q.id), ...qs.filter(q => q.type === 'choice').map(q => q.id + '_p'), 'total_pct'].filter(Boolean);
+    const qs = g.questions || [], fields = g.extractor?.fields || [], rules = g.derive || [], flags = g.flags || [];
+    const names = [...qs.map(q => q.id), ...qs.filter(q => q.type === 'choice').map(q => q.id + '_p'), ...CHECK_NAMES].filter(Boolean);
     body.innerHTML = `
       <div class="ed-sec"><div class="ed-h">Gate</div><div class="ed-grid">
         <label>Id<small>lowercase_with_underscores; shown as “${esc(gateName(g.id || ''))}”</small>${inp('id', '', 'e.g. key_person')}</label>
@@ -245,6 +247,9 @@ async function editor(file, parsed, text, done) {
         ${rules.map((r, i) => `<div class="ed-row"><span class="i rule-i">${i + 1}</span><span class="dim" style="font-size:12px">if</span>${inp(`derive.${i}.if`, 'expr', 'otherwise (leave empty)', 'data-mono')}<span class="dim" style="font-size:12px">then</span>
           <input class="fi" list="results" data-k="derive.${i}.then" value="${esc(r.then || '')}" style="max-width:220px">${rowBtns('derive', i, rules.length)}</div>`).join('')}
         <datalist id="results">${RESULTS.map(x => `<option value="${x}">`).join('')}</datalist></div>
+      <div class="ed-sec"><div class="ed-h">Flags<small>every flag whose condition holds is shown with the result, e.g. QP-only · same names as the rules · empty condition means always</small><span class="sp"></span><button class="ghost-btn sm" data-add="flags"><sl-icon name="plus-lg"></sl-icon>Flag</button></div>
+        ${flags.map((f, i) => `<div class="ed-row"><sl-icon name="flag" class="dim"></sl-icon><span class="dim" style="font-size:12px">if</span>${inp(`flags.${i}.if`, 'expr', 'always (leave empty)', 'data-mono')}<span class="dim" style="font-size:12px">flag</span>
+          ${inp(`flags.${i}.flag`, '', 'e.g. QP-only', 'style="max-width:260px"')}${rowBtns('flags', i, flags.length)}</div>`).join('')}</div>
       <div class="ed-sec"><div class="ed-h">Analyst review</div><div class="ed-grid">
         <label>Review below confidence<small>a decisive answer under this goes to an analyst</small>${inp('review_if.min_confidence', 'num', '0.75', 'type="number" step="0.05" min="0" max="1"')}</label>
         <label>Decisive questions<small>none ticked means all questions</small><span style="display:flex;gap:12px;flex-wrap:wrap">${qs.filter(q => q.id).map(q => `<label class="ed-inline"><input type="checkbox" class="fi-cb" data-dec="${esc(q.id)}" ${(g.review_if?.decisive || []).includes(q.id) ? 'checked' : ''}>${esc(q.id)}</label>`).join('') || '<span class="dim">add questions first</span>'}</span></label></div></div>`}`;
@@ -282,6 +287,7 @@ async function editor(file, parsed, text, done) {
   body.addEventListener('click', e => {
     const add = e.target.closest('[data-add]')?.dataset.add, mv = e.target.closest('[data-mv]'), rm = e.target.closest('[data-rm]');
     if (add === 'fields') (g.extractor ||= {}).fields = [...(g.extractor.fields || []), { name: '', description: '' }];
+    if (add === 'flags') g.flags = [...(g.flags || []), { if: '', flag: '' }];
     if (add === 'questions') g.questions = [...(g.questions || []), { id: '', type: 'bool', q: '' }];
     if (add === 'derive') { const r = g.derive || []; const last = r.at(-1); g.derive = last && last.if == null ? [...r.slice(0, -1), { if: '', then: 'Incomplete' }, last] : [...r, { if: '', then: 'Pass' }]; }
     if (mv) { const arr = get(g, mv.dataset.mv), i = +mv.dataset.i, j = i + +mv.dataset.d; [arr[i], arr[j]] = [arr[j], arr[i]]; }
@@ -335,7 +341,9 @@ function clean(g) {
     (ex.fields || []).forEach(f => { if (!f.recurring) delete f.recurring; if (f.description === '') delete f.description; });
   }
   (o.derive || []).forEach(r => { if (r.if === '' || r.if == null) delete r.if; });
+  (o.flags || []).forEach(f => { if (f.if === '' || f.if == null) delete f.if; });
+  if (Array.isArray(o.flags) && !o.flags.length) delete o.flags;
   if (o.review_if) { if (o.review_if.min_confidence == null) delete o.review_if.min_confidence; if (!Object.keys(o.review_if).length) delete o.review_if; }
-  if (o.static_result) { delete o.extractor; delete o.questions; delete o.derive; delete o.review_if; }
+  if (o.static_result) { delete o.extractor; delete o.questions; delete o.derive; delete o.review_if; delete o.flags; }
   return o;
 }

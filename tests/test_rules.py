@@ -7,7 +7,7 @@ import yaml
 
 from sg import gate_store, store
 from sg.gate_store import validate
-from sg.pipeline import derive, load_gates, reduce_gates, resolve
+from sg.pipeline import code_checks, derive, load_gates, raise_flags, reduce_gates, resolve
 
 
 def bool_q(qid):
@@ -45,32 +45,120 @@ class Derive(unittest.TestCase):
     def test_no_match_is_incomplete(self):
         self.assertEqual(derive([{"if": "x > 0.5", "then": "A"}], {"x": 0.1}), "Incomplete")
 
-    def test_thresholds_are_inclusive_as_written(self):
-        rules = self.gates["investor_eligibility"]["derive"]
-        self.assertEqual(derive(rules, {"sufficient": 0.7, "qp_only": 0.7}), "Fail")
-        self.assertEqual(derive(rules, {"sufficient": 0.69, "qp_only": 0.9}), "Incomplete")
-        self.assertEqual(derive(rules, {"sufficient": 0.9, "qp_only": 0.69}), "Pass")
+    def outcome(self, gate, **env):
+        g = self.gates[gate]
+        full = {"total_pct": None, "fees_disagree": False, **env}
+        return derive(g["derive"], full), raise_flags(g.get("flags"), full)
 
-    def test_cost_gate_without_a_percentage(self):
-        rules = self.gates["total_annual_cost"]["derive"]
-        self.assertEqual(derive(rules, {"sufficient": 0.9, "total_pct": None}), "Pass")
-        self.assertEqual(derive(rules, {"sufficient": 0.9, "total_pct": 3.5}), "Route with disclosure")
-        self.assertEqual(derive(rules, {"sufficient": 0.9, "total_pct": 3.0}), "Pass")
+    def test_qp_only_passes_with_a_flag(self):
+        # Decision A2: a QP-only fund moves forward, tagged for the QP lineup.
+        e = {"sufficient": 0.9, "institutions_only": 0.1}
+        self.assertEqual(self.outcome("investor_eligibility", **e, qp_only=0.7), ("Pass", ["QP-only"]))
+        self.assertEqual(self.outcome("investor_eligibility", **e, qp_only=0.69), ("Pass", []))
+
+    def test_only_institutions_only_fails_eligibility(self):
+        # Decision A4. Thresholds are inclusive as written.
+        e = {"sufficient": 0.9, "qp_only": 0.9}
+        self.assertEqual(self.outcome("investor_eligibility", **e, institutions_only=0.7), ("Fail", []))
+        self.assertEqual(
+            self.outcome("investor_eligibility", sufficient=0.69, qp_only=0.9, institutions_only=0.9),
+            ("Incomplete", []),
+        )
+
+    def test_cost_never_fails_and_has_no_threshold(self):
+        # Decisions B1 and B6: Pass or Incomplete only.
+        self.assertEqual(self.outcome("total_annual_cost", sufficient=0.9, total_pct=9.5), ("Pass", []))
+        self.assertEqual(self.outcome("total_annual_cost", sufficient=0.5, total_pct=1.0), ("Incomplete", []))
+
+    def test_cost_documents_disagreeing_is_incomplete(self):
+        self.assertEqual(
+            self.outcome("total_annual_cost", sufficient=0.9, fees_disagree=True),
+            ("Incomplete", ["Fee rates disagree across documents"]),
+        )
+
+    def test_affiliated_administrator_is_incomplete_with_a_flag(self):
+        # Decision C1; custody and pricing are always the analyst's line (C3).
+        e = {"sufficient": 0.9, "has_valuation_policy": 0.9}
+        result, flags = self.outcome("operability", **e, affiliated_admin=0.8)
+        self.assertEqual(result, "Incomplete")
+        self.assertEqual(flags, ["Affiliated administrator", "Custody and pricing: analyst to check"])
+        self.assertEqual(self.outcome("operability", **e, affiliated_admin=0.1)[0], "Pass")
+
+    def test_missing_valuation_policy_is_incomplete(self):
+        # Decision C2.
+        e = {"sufficient": 0.9, "affiliated_admin": 0.1}
+        self.assertEqual(self.outcome("operability", **e, has_valuation_policy=0.2)[0], "Incomplete")
+
+    def test_track_record_never_fails(self):
+        # Decisions D1 to D3: only a net, fund-level record of this manager at this fee load passes.
+        good = {"sufficient": 0.8, "basis": "net", "basis_p": 0.9, "fund_level": 0.9}
+        good |= {"prior_employer": 0.1, "lighter_fees": 0.1}
+        self.assertEqual(self.outcome("track_record", **good), ("Pass", []))
+        pro_forma = ["RWP pro forma possible"]
+        self.assertEqual(self.outcome("track_record", **{**good, "basis": "gross"}), ("Incomplete", pro_forma))
+        self.assertEqual(self.outcome("track_record", **{**good, "fund_level": 0.2}), ("Incomplete", pro_forma))
+        self.assertEqual(self.outcome("track_record", **{**good, "prior_employer": 0.9}), ("Incomplete", pro_forma))
+        self.assertEqual(
+            self.outcome("track_record", **{**good, "lighter_fees": 0.9}),
+            ("Incomplete", ["Restate the record at this fund's fees"]),
+        )
+        self.assertEqual(
+            self.outcome("track_record", **{**good, "sufficient": 0.1, "basis": "not_stated"}), ("Incomplete", [])
+        )
 
     def test_unguarded_none_comparison_raises(self):
-        # Why the shipped rules say "total_pct is not None and ...". validate() does not catch this.
+        # Why rules on total_pct must say "total_pct is not None and ...". validate() does not catch this.
         with self.assertRaises(TypeError):
             derive([{"if": "total_pct > 3.0", "then": "A"}], {"total_pct": None})
-
-    def test_track_record_needs_net_basis(self):
-        rules = self.gates["track_record"]["derive"]
-        self.assertEqual(derive(rules, {"basis": "net", "basis_p": 0.9, "sufficient": 0.8}), "Pass")
-        self.assertEqual(derive(rules, {"basis": "gross", "basis_p": 0.9, "sufficient": 0.8}), "Fail")
-        self.assertEqual(derive(rules, {"basis": "net", "basis_p": 0.9, "sufficient": 0.5}), "Fail")
 
     def test_no_builtins_in_conditions(self):
         with self.assertRaises(NameError):
             derive([{"if": "len('x') > 0", "then": "A"}], {})
+
+
+class FeeChecks(unittest.TestCase):
+    GATE = {
+        "extractor": {
+            "fields": [
+                {"name": "management_fee", "recurring": True},
+                {"name": "servicing_fee", "recurring": True},
+                {"name": "incentive_fee"},
+            ]
+        }
+    }
+
+    def fact(self, field, value):
+        return {"field": field, "value": value}
+
+    def test_counted_layers_are_summed_once(self):
+        facts = [
+            self.fact("management_fee", "1.25% of NAV"),
+            self.fact("management_fee", "1.25 %"),
+            self.fact("servicing_fee", "0.50%"),
+            self.fact("incentive_fee", "12.5% over 6%"),
+        ]
+        self.assertEqual(
+            code_checks(self.GATE, facts), {"total_pct": 1.75, "fees_disagree": False, "fee_conflicts": {}}
+        )
+
+    def test_two_rates_for_one_layer_is_a_disagreement(self):
+        # e.g. the term sheet and the PPM quote different management fees.
+        facts = [self.fact("management_fee", "1.35%"), self.fact("management_fee", "1.55%")]
+        self.assertEqual(
+            code_checks(self.GATE, facts),
+            {"total_pct": None, "fees_disagree": True, "fee_conflicts": {"management_fee": [1.35, 1.55]}},
+        )
+
+    def test_no_counted_rate_means_no_total(self):
+        facts = [self.fact("management_fee", "see PPM")]
+        self.assertEqual(code_checks(self.GATE, facts)["total_pct"], None)
+
+
+class Flags(unittest.TestCase):
+    def test_every_holding_flag_in_order_and_unconditional_always(self):
+        flags = [{"if": "x > 0.5", "flag": "A"}, {"flag": "B"}, {"if": "x > 0.9", "flag": "C"}]
+        self.assertEqual(raise_flags(flags, {"x": 0.7}), ["A", "B"])
+        self.assertEqual(raise_flags(None, {}), [])
 
 
 @pytest.mark.usefixtures("db")
@@ -80,6 +168,46 @@ class ShippedGates(unittest.TestCase):
             with self.subTest(gate=g["file"]):
                 err, _ = validate(yaml.safe_load(g["text"]), own_file=g["file"])
                 self.assertEqual(err, [])
+
+    def test_every_automated_gate_has_the_same_shape(self):
+        for g in load_gates():
+            if g.get("static_result"):
+                continue
+            with self.subTest(gate=g["id"]):
+                self.assertEqual(set(g), {"id", "version", "extractor", "questions", "derive", "flags"})
+                self.assertLessEqual({r["then"] for r in g["derive"]}, set(gate_store.RESULTS))
+
+    def test_the_seeded_gates_are_kept_in_history(self):
+        # The screen-decisions migration replaced four gates; their seeded versions stay restorable.
+        kept = {(h["id"], h["version"]) for h in gate_store.history()}
+        for gid in ("investor_eligibility", "total_annual_cost", "operability", "track_record"):
+            self.assertIn((gid, 2), kept)
+        live = {g["id"]: g for g in gate_store.current()}
+        self.assertEqual(live["track_record"]["version"], 3)
+        self.assertEqual(yaml.safe_load(live["track_record"]["text"])["version"], 3)
+
+
+@pytest.mark.usefixtures("db")
+class Validate(unittest.TestCase):
+    GATE = {
+        "id": "x_gate",
+        "extractor": {"keywords": ["k"], "fields": [{"name": "f"}]},
+        "questions": [{"id": "ok", "type": "bool", "q": "?"}],
+    }
+
+    def errors(self, **over):
+        return validate({**self.GATE, **over})[0]
+
+    def test_results_are_pass_fail_or_incomplete(self):
+        self.assertEqual(self.errors(derive=[{"then": "Pass"}]), [])
+        err = self.errors(derive=[{"if": "ok > 0.5", "then": "Route with disclosure"}, {"then": "Pass"}])
+        self.assertEqual(err, ["rule 1: the result must be Pass, Fail or Incomplete; say anything more with a flag"])
+
+    def test_flags_need_text_and_known_names(self):
+        err = self.errors(derive=[{"then": "Pass"}], flags=[{"if": "ok > 0.5"}, {"if": "nope", "flag": "N"}])
+        self.assertEqual(err[0], "flag 1 needs its text")
+        self.assertTrue(err[1].startswith("flag 2: unknown name nope"))
+        self.assertEqual(self.errors(derive=[{"then": "Pass"}], flags=[{"if": "fees_disagree", "flag": "F"}]), [])
 
 
 @pytest.mark.usefixtures("db")
