@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from . import gate_store, store
+from . import consistency, gate_store, store
 from .catalog import load as load_catalog
 from .dataroom import DataRoom
 from .extractors import EXTRACTORS
@@ -151,7 +151,22 @@ def run_gate(gate, room, extractor, judge, tr, catalog=None, share_class=None):
         f["match"] = room.verify_quote(f["file"], f["page"], f["quote"])
         (facts if f["match"] else rejected).append(f)
     reflowed = sum(f["match"] == "reflowed" for f in facts)
-    tr.end(e, f"{len(facts)} verified ({reflowed} across layout), {len(rejected)} rejected")
+    # Two documents stating a gate field differently is a finding (decision F3): figures in code, wording by
+    # the run's model when it has one.
+    kind_of = consistency.kinds(catalog)
+    contradictions, wording = consistency.in_code(facts, kind_of)
+    compare, compare_error = consistency.WORDING.get(extractor), None
+    if compare and wording:
+        CTX.set({**ctx, "step": "compare"})
+        try:
+            contradictions += compare(gate["id"], wording, kind_of)
+        except Exception as err:  # the call is in model_calls; the screen goes on with the figures
+            compare_error = f"{type(err).__name__}: {err}"
+    tr.end(
+        e,
+        f"{len(facts)} verified ({reflowed} across layout), {len(rejected)} rejected, "
+        f"{len(contradictions)} contradiction{'' if len(contradictions) == 1 else 's'}",
+    )
     names = {f["name"] for f in ex["fields"]}
     missing = sorted(names - {f["field"] for f in facts})
     checks = code_checks(gate, facts)
@@ -174,6 +189,8 @@ def run_gate(gate, room, extractor, judge, tr, catalog=None, share_class=None):
         result=result,
         flags=flags,
         checks=gate.get("checks") or [],
+        contradictions=contradictions,
+        compare_error=compare_error,
         review=bool(low),
         low_confidence=low,
         brief=brief,
@@ -188,6 +205,23 @@ def run_gate(gate, room, extractor, judge, tr, catalog=None, share_class=None):
         calls=calls,
     )
     return rec
+
+
+def check_marketing(room, catalog, extractor, tr):
+    """Room-wide (decision F3): marketing statements a filed document contradicts. Needs a model adapter, so
+    stub and fixture runs skip it. Returns (findings, error)."""
+    fn = consistency.MARKETING_CHECK.get(extractor)
+    if not fn:
+        return [], None
+    e = tr.begin("consistency", "compare")
+    CTX.set({"fund": room.name, "gate": "consistency", "step": "compare"})
+    try:
+        found = consistency.verified(room, fn(room, catalog))
+    except Exception as err:  # the call is in model_calls; the screen goes on without this check
+        tr.end(e, "failed")
+        return [], f"{type(err).__name__}: {err}"
+    tr.end(e, f"{len(found)} marketing statement{'' if len(found) == 1 else 's'} contradicted")
+    return found, None
 
 
 def reduce_gates(policy, results):
@@ -213,8 +247,10 @@ def run(data_room, extractor, judge, only=None, tracker=None):
     tr.end(e, f"{sum(d['canonical'] for d in catalog)} canonical documents")
     fund_id = re.sub(r"[^\w.-]+", "_", room.name)
     share_class = store.intake(fund_id)["share_class"]
-    with ThreadPoolExecutor(max_workers=len(gates)) as pool:
+    with ThreadPoolExecutor(max_workers=len(gates) + 1) as pool:
+        marketing = pool.submit(check_marketing, room, catalog, extractor, tr)
         results = list(pool.map(lambda g: run_gate(g, room, extractor, judge, tr, catalog, share_class), gates))
+        marketing_found, marketing_error = marketing.result()
     for r in results:
         r["timeline"] = [e for e in tr.steps if e["gate"] == r["gate"]]
     disposition, flags = reduce_gates(policy, results)
@@ -227,6 +263,8 @@ def run(data_room, extractor, judge, only=None, tracker=None):
         "share_class": share_class,
         "disposition": disposition,
         "flags": flags,
+        "marketing_contradictions": marketing_found,
+        "marketing_check_error": marketing_error,
         "seconds": round(time.time() - tr.t0, 2),
         "gates": {
             r["gate"]: {
@@ -268,9 +306,19 @@ def render_md(summary, results):
             L.append(f"- **{f['field']}**: {f['value']}  ({f['file'].split('/')[-1]}, p.{f['page']})")
         if b["not_found"]:
             L.append(f"- Not found: {', '.join(b['not_found'])}")
-        for field, pcts in b["checks"].get("fee_conflicts", {}).items():
-            L.append(f"- Documents disagree on **{field}**: {', '.join(f'{x:g}%' for x in pcts)}")
+        for c in r.get("contradictions") or []:
+            where = "; ".join(f"{v['file'].split('/')[-1]} p.{v['page']}: {v['value']}" for v in c["values"])
+            L.append(f"- Documents disagree on **{c['field']}**: {c['summary']} ({where})")
         if r["rejected"]:
             L.append(f"- Rejected, quote not on cited page: {len(r['rejected'])}")
+        L.append("")
+    if summary.get("marketing_contradictions"):
+        L += ["## Marketing against filed documents", ""]
+        for c in summary["marketing_contradictions"]:
+            m, f = c["marketing"], c["filed"]
+            L.append(
+                f'- **{c["topic"]}**: {c["summary"]} Marketing: "{m["quote"]}" ({m["file"].split("/")[-1]} p.{m["page"]}). '
+                f'Filed: "{f["quote"]}" ({f["file"].split("/")[-1]} p.{f["page"]}).'
+            )
         L.append("")
     return "\n".join(L)

@@ -100,14 +100,16 @@ export async function render(el, r) {
         const t = resultTone(res), note = reviewNote(e);
         return `<button class="gcard ${t}" data-g="${esc(g.gate)}"><div class="n">Gate ${GATE_ORDER.indexOf(g.gate) + 1 || i + 1}</div><div class="t">${esc(gateName(g.gate))}</div>${resultChip(res, e ? e.needs_review : g.review)}${g.flags?.length ? `<div class="flags">${flagChips(g.flags)}</div>` : ''}${note ? `<div class="rv-note">${esc(note)}</div>` : ''}
           ${c != null ? `<div class="conf"><span class="meter"><span style="width:${c * 100}%"></span><i style="left:75%"></i></span><span class="tnum">${pct(c)}</span></div>` : `<div class="conf">${esc(g.note || 'Not automated')}</div>`}
-          ${g.brief ? `<div class="ev"><span>${g.brief.facts.length} facts</span><span>${g.brief.not_found.length} not found</span>${g.rejected?.length ? `<span>${g.rejected.length} off page</span>` : ''}</div>` : ''}</button>`;
+          ${g.brief ? `<div class="ev"><span>${g.brief.facts.length} facts</span><span>${g.brief.not_found.length} not found</span>${g.rejected?.length ? `<span>${g.rejected.length} off page</span>` : ''}${g.contradictions?.length ? `<span class="warn-t">${g.contradictions.length} disagree</span>` : ''}</div>` : ''}</button>`;
       }).join('')}</div>
       <div class="legend" style="margin:8px 0 16px"><span class="dim">Bar shows the lowest confidence among decisive judge answers. The tick marks the 0.75 review threshold. Click a gate for its evidence.</span></div>
+      ${marketingCard(sm)}
       <div class="card"><div class="hd"><h2 class="sec">Run timeline</h2><span class="sec-sub">${sm.seconds ?? ''}s total</span><span class="sp"></span>
         <div class="seg" id="tlseg"><button class="on" data-v="w">Timeline</button><button data-v="m">Step table</button></div></div>
         <div class="bd" id="tl">${steps.length ? waterfall(steps, gates.map(g => g.gate)) : '<span class="dim">This run predates step timing.</span>'}</div></div>` : ''}`;
     $('#runsel', box)?.addEventListener('sl-change', e => { runId = e.target.value; setHash(); screenTab(box); });
     $$('.gcard', box).forEach(b => b.addEventListener('click', () => gateDrawer(gates.find(g => g.gate === b.dataset.g))));
+    $$('#marketing .cite', box).forEach(c => c.addEventListener('click', () => openPreview(data.room_path + '/' + c.dataset.file, { page: +c.dataset.page, quote: c.dataset.quote })));
     $('#dc-go', box)?.addEventListener('click', async () => {
       const me = await currentReviewer();
       try {
@@ -170,6 +172,10 @@ export async function render(el, r) {
         ${b.not_found.length ? `<div style="padding:10px 16px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="dim" style="font-size:12px">Not found:</span>${b.not_found.map(x => `<span class="chip warn"><sl-icon name="question-circle"></sl-icon>${esc(x)}</span>`).join('')}</div>` : ''}
         ${b.checks?.total_pct != null ? `<div style="padding:4px 16px 12px;font-size:12.5px" class="muted">Code check, counted fee layers summed: <b style="color:var(--ink)">${b.checks.total_pct}%</b></div>` : ''}
         ${Object.entries(b.checks?.fee_conflicts || {}).map(([k, v]) => `<div style="padding:4px 16px 12px;font-size:12.5px" class="muted">Documents disagree on <span class="mono">${esc(k)}</span>: <b style="color:var(--ink)">${v.map(x => esc(x) + '%').join(', ')}</b></div>`).join('')}</div></div>
+      ${g.contradictions?.length || g.compare_error ? `<div class="card" id="disagree"><div class="hd"><h2 class="sec">Documents disagree</h2><span class="sec-sub">a gate field stated differently in two documents is a finding</span></div><div class="bd flush">
+        ${g.compare_error ? `<div style="padding:10px 16px" class="muted">Wording was not compared: ${esc(g.compare_error)}</div>` : ''}
+        ${(g.contradictions || []).map(c => `<div style="padding:10px 16px;border-bottom:1px solid var(--line)"><div style="margin-bottom:6px"><span class="mono">${esc(c.field)}</span> · ${esc(c.summary)}${c.marketing_vs_filed ? ' <span class="chip warn">Marketing vs filed</span>' : ''}</div>
+          <table class="t compact">${c.values.map(v => `<tr><td class="dim" style="white-space:nowrap">${esc(v.kind)}</td><td class="wrap">${esc(v.value)}</td><td style="min-width:180px">${cite(v)}</td></tr>`).join('')}</table></div>`).join('')}</div></div>` : ''}
       ${g.rejected?.length ? `<div class="card"><div class="hd"><h2 class="sec">Quotes not found on the cited page</h2><span class="sec-sub">${g.rejected.length} dropped before judging</span></div><div class="bd flush"><table class="t">
         ${g.rejected.map(f => `<tr><td class="mono">${esc(f.field)}</td><td class="wrap"><div class="quote">“${esc(f.quote)}”</div></td><td>${cite(f)}</td></tr>`).join('')}</table></div></div>` : ''}
       ${g.routing?.length ? `<div class="card"><div class="hd"><h2 class="sec">What the extractor read</h2><span class="sec-sub">${g.pages_offered?.length || 0} pages offered</span></div><div class="bd flush"><table class="t compact">
@@ -324,4 +330,15 @@ function decisionBar(d) {
   const open = d.state === 'draft' || d.state === 'awaiting_signoff';
   return `<div class="card" id="decision"><div class="bd rv-row" style="margin:0">${decisionChip(d)}<span style="flex:1;min-width:200px">${esc(status)}</span>
     ${open ? `<input class="fi" id="dc-reason" aria-label="Reason" placeholder="Reason (optional)" style="max-width:260px"><button class="glow-btn sm" id="dc-go" ${d.blockers.length ? 'disabled' : ''}><sl-icon name="patch-check"></sl-icon>${d.state === 'awaiting_signoff' ? 'Sign off' : 'Confirm disposition'}</button>` : ''}</div></div>`;
+}
+
+// Room-wide (decision F3): statements in marketing documents that a filed document contradicts.
+function marketingCard(sm) {
+  const found = sm?.marketing_contradictions || [];
+  if (!found.length && !sm?.marketing_check_error) return '';
+  const side = (label, x) => `<div class="mk-side"><div class="dim" style="font-size:11.5px">${label}</div><div class="quote">“${esc(x.quote)}”</div>
+    <button class="cite" data-file="${esc(x.file)}" data-page="${x.page}" data-quote="${esc(x.quote)}"><sl-icon name="file-earmark-pdf"></sl-icon>${esc(x.file.split('/').pop())} · p.${x.page}</button></div>`;
+  return `<div class="card" id="marketing"><div class="hd"><h2 class="sec">Marketing against filed documents</h2><span class="sec-sub">${found.length} contradicted · always a finding</span></div><div class="bd">
+    ${sm.marketing_check_error ? `<p class="muted" style="margin-top:0">The check did not run: ${esc(sm.marketing_check_error)}</p>` : ''}
+    ${found.map(c => `<div class="mk-row"><div style="font-weight:600;margin-bottom:6px">${esc(c.topic)} <span class="dim" style="font-weight:400">· ${esc(c.summary)}</span></div><div class="mk-pair">${side('Marketing', c.marketing)}${side('Filed', c.filed)}</div></div>`).join('')}</div></div>`;
 }

@@ -6,7 +6,8 @@ import time
 import psycopg
 import pytest
 
-from sg import extractors, judges, llm, pipeline, store
+from sg import consistency, extractors, judges, llm, pipeline, store
+from sg.dataroom import DataRoom
 
 pytestmark = pytest.mark.usefixtures("db")
 
@@ -85,3 +86,48 @@ def test_the_chosen_share_class_reaches_the_fee_gate_and_the_run_record(room, mo
     assert "Class I" not in seen["operability"]
     assert summary["share_class"] == "Class I"
     assert "Share class screened: Class I." in store.run("Acme_Partners_-_Fund_I", summary["run"])["markdown"]
+
+
+@pytest.mark.usefixtures("stubs")
+def test_contradictions_are_found_and_a_failed_comparison_does_not_stop_the_screen(tmp_path, monkeypatch):
+    folder = tmp_path / "Acme Partners - Fund I"
+    (folder / "_index").mkdir(parents=True)
+    terms, deck = "Acme Fund I - Term Sheet.pdf", "Acme Fund I - Deck.pdf"
+    said = {
+        terms: ("Minimum: $250,000", "Administrator: Harbor Fund Services"),
+        deck: ("Minimum: $100,000", "Administrator: Monroe Admin, an affiliate"),
+    }
+    (folder / "_index" / "pages.jsonl").write_text(
+        "".join(json.dumps({"file": f, "page": 1, "chars": 80, "text": ". ".join(t)}) + "\n" for f, t in said.items())
+    )
+
+    def two_documents(gate, room, pages):
+        if gate["id"] != "operability":
+            return []
+        return [
+            {"field": field, "value": quote.split(": ")[1], "file": file, "page": 1, "quote": quote}
+            for file, quotes in said.items()
+            for field, quote in zip(("custody", "administrator"), quotes, strict=True)
+        ]
+
+    def wording(gate_id, groups, kind_of):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setitem(extractors.EXTRACTORS, "stub", two_documents)
+    monkeypatch.setitem(consistency.WORDING, "stub", wording)
+    _, summary, results = pipeline.run(folder, "stub", "stub")
+    ops = next(r for r in results if r["gate"] == "operability")
+    assert [(c["field"], c["summary"]) for c in ops["contradictions"]] == [
+        ("custody", "Documents give $100,000, $250,000")
+    ]
+    assert ops["compare_error"] == "RuntimeError: model unavailable"  # the administrator wording was not compared
+    assert summary["marketing_contradictions"] == [] and summary["marketing_check_error"] is None
+
+
+def test_check_marketing_reports_a_failed_call_without_raising(room, monkeypatch):
+    def boom(room, catalog):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setitem(consistency.MARKETING_CHECK, "stub", boom)
+    found, err = pipeline.check_marketing(DataRoom(room), [], "stub", pipeline.Tracker())
+    assert found == [] and err == "RuntimeError: model unavailable"
