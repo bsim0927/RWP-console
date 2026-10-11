@@ -1,5 +1,5 @@
 import {
-  $, $$, api, cached, bust, esc, n, pct, ago, fmtDT, stampDate, gateName, sortGates, resultChip, resultTone, resultIcon, dispChip, dispTone, dispIcon, dispShort, dispNote,
+  $, $$, api, cached, bust, esc, n, pct, ago, fmtDT, stampDate, gateName, sortGates, resultChip, flagChips, resultTone, resultIcon, dispChip, dispTone, dispIcon, dispShort, dispNote,
   pipeChip, splitName, initials, waterfall, stepMatrix, lineChart, legend, hbars, markdown, openPreview, empty, skeleton, TIERS, TIER_COL, gateColor, GATE_ORDER, toast,
 } from '../lib.js';
 import { setCrumbs, screenDialog, jobs, onJobs } from '../app.js';
@@ -83,7 +83,7 @@ export async function render(el, r) {
           <div class="m"><b>${tok ? n(tok) : '–'}</b><span>judge tokens</span></div><div class="m"><b>${sm.seconds != null ? sm.seconds + 's' : '–'}</b><span>duration</span></div></div></div>
       <div class="flow">${gates.map((g, i) => {
         const t = resultTone(g.result), c = g.min_confidence;
-        return `<button class="gcard ${t}" data-g="${esc(g.gate)}"><div class="n">Gate ${GATE_ORDER.indexOf(g.gate) + 1 || i + 1}</div><div class="t">${esc(gateName(g.gate))}</div>${resultChip(g.result, g.review)}
+        return `<button class="gcard ${t}" data-g="${esc(g.gate)}"><div class="n">Gate ${GATE_ORDER.indexOf(g.gate) + 1 || i + 1}</div><div class="t">${esc(gateName(g.gate))}</div>${resultChip(g.result, g.review)}${g.flags?.length ? `<div class="flags">${flagChips(g.flags)}</div>` : ''}
           ${c != null ? `<div class="conf"><span class="meter"><span style="width:${c * 100}%"></span><i style="left:75%"></i></span><span class="tnum">${pct(c)}</span></div>` : `<div class="conf">${esc(g.note || 'Not automated')}</div>`}
           ${g.brief ? `<div class="ev"><span>${g.brief.facts.length} facts</span><span>${g.brief.not_found.length} not found</span>${g.rejected?.length ? `<span>${g.rejected.length} off page</span>` : ''}</div>` : ''}</button>`;
       }).join('')}</div>
@@ -127,6 +127,7 @@ export async function render(el, r) {
     const answers = Object.entries(g.answers || {}).filter(([k]) => k !== '_meta');
     const meta = g.answers?._meta;
     d.innerHTML = `<div class="bar">${resultChip(g.result, g.review)}<span class="sp"></span><span class="dim mono">gate v${esc(g.gate_version)} · brief ${esc(g.brief_sha || '')}</span></div>
+      ${g.flags?.length ? `<div class="flags" style="margin-bottom:14px">${flagChips(g.flags)}</div>` : ''}
       ${g.review ? `<sl-alert variant="warning" open style="margin-bottom:14px"><sl-icon slot="icon" name="person-check"></sl-icon>Low confidence on <b>${esc((g.low_confidence || []).join(', '))}</b>. An analyst confirms this gate.</sl-alert>` : ''}
       <div class="card"><div class="hd"><h2 class="sec">Judge answers</h2><span class="sec-sub">${esc(g.judge)}${meta ? ` · ${esc(meta.model)} · ${n(meta.usage?.input_tokens)} in / ${n(meta.usage?.output_tokens)} out` : ''}</span></div><div class="bd">
         ${(g.questions || []).map(qq => `<div style="margin-bottom:12px"><div style="margin-bottom:4px">${esc(qq.q)} <span class="dim mono">${esc(qq.id)} · ${esc(qq.type)}</span></div>
@@ -137,7 +138,8 @@ export async function render(el, r) {
         ${b.facts.length ? `<table class="t"><tr><th>Field</th><th>Value and quote</th><th>Source</th></tr>${b.facts.map(f => `<tr><td class="mono" style="white-space:nowrap">${esc(f.field)}</td>
           <td class="wrap"><div style="margin-bottom:5px">${esc(f.value || '')}</div><div class="quote">“${esc(f.quote)}”</div></td><td style="min-width:180px">${cite(f)}</td></tr>`).join('')}</table>` : '<div class="empty" style="padding:20px">No facts verified.</div>'}
         ${b.not_found.length ? `<div style="padding:10px 16px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="dim" style="font-size:12px">Not found:</span>${b.not_found.map(x => `<span class="chip warn"><sl-icon name="question-circle"></sl-icon>${esc(x)}</span>`).join('')}</div>` : ''}
-        ${b.checks?.total_pct != null ? `<div style="padding:4px 16px 12px;font-size:12.5px" class="muted">Code check, recurring fees summed: <b style="color:var(--ink)">${b.checks.total_pct}%</b></div>` : ''}</div></div>
+        ${b.checks?.total_pct != null ? `<div style="padding:4px 16px 12px;font-size:12.5px" class="muted">Code check, counted fee layers summed: <b style="color:var(--ink)">${b.checks.total_pct}%</b></div>` : ''}
+        ${Object.entries(b.checks?.fee_conflicts || {}).map(([k, v]) => `<div style="padding:4px 16px 12px;font-size:12.5px" class="muted">Documents disagree on <span class="mono">${esc(k)}</span>: <b style="color:var(--ink)">${v.map(x => esc(x) + '%').join(', ')}</b></div>`).join('')}</div></div>
       ${g.rejected?.length ? `<div class="card"><div class="hd"><h2 class="sec">Quotes not found on the cited page</h2><span class="sec-sub">${g.rejected.length} dropped before judging</span></div><div class="bd flush"><table class="t">
         ${g.rejected.map(f => `<tr><td class="mono">${esc(f.field)}</td><td class="wrap"><div class="quote">“${esc(f.quote)}”</div></td><td>${cite(f)}</td></tr>`).join('')}</table></div></div>` : ''}
       ${g.routing?.length ? `<div class="card"><div class="hd"><h2 class="sec">What the extractor read</h2><span class="sec-sub">${g.pages_offered?.length || 0} pages offered</span></div><div class="bd flush"><table class="t compact">

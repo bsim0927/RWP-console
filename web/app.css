@@ -220,6 +220,7 @@ sl-tab-group::part(body){overflow:visible}
 .gcard::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:var(--none)}
 .gcard.good::before{background:var(--good)}.gcard.warn::before{background:var(--warn)}.gcard.serious::before{background:var(--serious)}.gcard.crit::before{background:var(--crit)}
 .gcard .n{font-size:11px;color:var(--ink3);font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.flags{display:flex;gap:5px;flex-wrap:wrap}.gcard .flags{margin-top:6px}.chip.flag{white-space:normal;height:auto;min-height:22px;padding-top:2px;padding-bottom:2px}
 .gcard .t{font-size:13.5px;font-weight:600;margin:3px 0 10px}
 .gcard .conf{width:100%;display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11.5px;color:var(--ink3)}
 .meter{flex:1;height:4px;border-radius:4px;background:var(--s4);position:relative;overflow:visible}

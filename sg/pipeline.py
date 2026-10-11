@@ -29,18 +29,18 @@ def load_gates(only=None, with_yaml=False):
 
 
 def code_checks(gate, facts):
-    """Deterministic numbers. Jev is weak on arithmetic, so it never does any."""
-    ctx: dict[str, float | None] = {"total_pct": None}
-    recurring = {f["name"] for f in gate["extractor"]["fields"] if f.get("recurring")}
-    vals = []
+    """Deterministic numbers. Jev is weak on arithmetic, so it never does any.
+    Each counted (recurring) fee layer is summed once; a layer quoted at two rates means the
+    documents disagree, and then there is no honest total."""
+    counted = {f["name"] for f in gate["extractor"]["fields"] if f.get("recurring")}
+    rates: dict[str, set[float]] = {}
     for f in facts:
-        if f["field"] in recurring:
-            m = re.search(r"(\d+(?:\.\d+)?)\s*%", f["value"])
-            if m:
-                vals.append(float(m.group(1)))
-    if recurring:
-        ctx["total_pct"] = round(sum(vals), 3) if vals else None
-    return ctx
+        m = f["field"] in counted and re.search(r"(\d+(?:\.\d+)?)\s*%", f["value"])
+        if m:
+            rates.setdefault(f["field"], set()).add(round(float(m.group(1)), 3))
+    conflicts = {k: sorted(v) for k, v in rates.items() if len(v) > 1}
+    total = round(sum(min(v) for v in rates.values()), 3) if rates and not conflicts else None
+    return {"total_pct": total, "fees_disagree": bool(conflicts), "fee_conflicts": conflicts}
 
 
 def resolve(questions, answers):
@@ -58,13 +58,21 @@ def resolve(questions, answers):
     return env, conf
 
 
+def holds(cond, env):
+    # Config is trusted and local. No builtins exposed to the expression.
+    return bool(eval(cond if cond is not None else "True", {"__builtins__": {}}, env))
+
+
 def derive(rules, env):
     for r in rules:
-        cond = r.get("if", "True")
-        # Config is trusted and local. No builtins exposed to the expression.
-        if eval(cond, {"__builtins__": {}}, env):
+        if holds(r.get("if"), env):
             return r["then"]
     return "Incomplete"
+
+
+def raise_flags(flags, env):
+    """What the analyst should know beyond the result, e.g. QP-only. A flag without a condition always shows."""
+    return [f["flag"] for f in flags or [] if holds(f.get("if"), env)]
 
 
 class Tracker:
@@ -93,6 +101,7 @@ def run_gate(gate, room, extractor, judge, tr, catalog=None):
         tr.end(e, gate["static_result"])
         rec.update(
             result=gate["static_result"],
+            flags=[],
             review=False,
             facts=[],
             rejected=[],
@@ -144,14 +153,16 @@ def run_gate(gate, room, extractor, judge, tr, catalog=None):
     tr.end(e, f"{len(questions)} questions")
     e = tr.begin(gate["id"], "derive")
     env, conf = resolve(questions, answers)
-    env.update(checks)
+    env.update({k: checks[k] for k in gate_store.CHECK_NAMES})
     result = derive(gate["derive"], env)
+    flags = raise_flags(gate.get("flags"), env)
     decisive = gate.get("review_if", {}).get("decisive", [q["id"] for q in questions])
     floor = gate.get("review_if", {}).get("min_confidence", 0.75)
     low = [i for i in decisive if conf[i] < floor]
-    tr.end(e, result)
+    tr.end(e, result + "".join(f" · {f}" for f in flags))
     rec.update(
         result=result,
+        flags=flags,
         review=bool(low),
         low_confidence=low,
         brief=brief,
@@ -204,7 +215,12 @@ def run(data_room, extractor, judge, only=None, tracker=None):
         "flags": flags,
         "seconds": round(time.time() - tr.t0, 2),
         "gates": {
-            r["gate"]: {"result": r["result"], "review": r.get("review"), "min_confidence": r.get("min_confidence")}
+            r["gate"]: {
+                "result": r["result"],
+                "flags": r.get("flags", []),
+                "review": r.get("review"),
+                "min_confidence": r.get("min_confidence"),
+            }
             for r in results
         },
     }
@@ -221,12 +237,13 @@ def render_md(summary, results):
         "",
         f"**{summary['disposition']}**",
         "",
-        "| Gate | Result | Analyst review | Evidence |",
-        "|---|---|---|---|",
+        "| Gate | Result | Flags | Analyst review | Evidence |",
+        "|---|---|---|---|---|",
     ]
     for r in results:
         ev = "; ".join(f"{f['file'].split('/')[-1]} p.{f['page']}" for f in r.get("brief", {}).get("facts", [])[:4])
-        L.append(f"| {r['gate']} | {r['result']} | {'yes' if r.get('review') else 'no'} | {ev or 'none'} |")
+        flags = "; ".join(r.get("flags") or []) or "none"
+        L.append(f"| {r['gate']} | {r['result']} | {flags} | {'yes' if r.get('review') else 'no'} | {ev or 'none'} |")
     L.append("")
     for r in results:
         b = r.get("brief")
@@ -237,6 +254,8 @@ def render_md(summary, results):
             L.append(f"- **{f['field']}**: {f['value']}  ({f['file'].split('/')[-1]}, p.{f['page']})")
         if b["not_found"]:
             L.append(f"- Not found: {', '.join(b['not_found'])}")
+        for field, pcts in b["checks"].get("fee_conflicts", {}).items():
+            L.append(f"- Documents disagree on **{field}**: {', '.join(f'{x:g}%' for x in pcts)}")
         if r["rejected"]:
             L.append(f"- Rejected, quote not on cited page: {len(r['rejected'])}")
         L.append("")
