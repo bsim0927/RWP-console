@@ -25,6 +25,8 @@ the result. Low-confidence answers go to an analyst.
 |---|---|
 | Data rooms (PDFs and `_index/pages.jsonl`) | Local disk, the data root (default `~/Desktop/RWP`) |
 | Runs, model calls, document catalogs | Supabase Postgres |
+| Intake, analyst reviews and checks, confirmed dispositions, screen notes | Supabase Postgres, every change kept |
+| Each fund's screen results (never its status) | Also written into its `PIPELINE.md` row (`RWP_PIPELINE_WRITE=0` turns this off) |
 | Gates and disposition policy | Supabase Postgres, edited and versioned in the console |
 | API keys and the database URL | `.env` (never committed) |
 
@@ -38,9 +40,10 @@ Needs [uv](https://docs.astral.sh/uv/), Node 22, and `.env` with `ANTHROPIC_API_
     uv run python screen.py <data-room-folder>    # screen one data room from the command line
 
 The console covers the overview, the screening queue, each fund (screen, catalog, files, search, history,
-report), catalogs, a file browser, document search, analytics, the agent monitor, and gates and policy.
-It changes data only when you run a screen, rebuild a catalog, or edit a gate or the policy. The previous
-single-page viewer is still at `/legacy`.
+note, report), catalogs, a file browser, document search, analytics, the agent monitor, and gates and policy.
+It changes data when you run a screen, rebuild a catalog, edit a gate, the policy or the reviewers, save a
+fund's intake, review a gate, confirm a disposition, or draft or edit a screen note. The previous single-page
+viewer is still at `/legacy`.
 
 ## Development
 

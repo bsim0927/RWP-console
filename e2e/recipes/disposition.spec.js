@@ -23,5 +23,11 @@ test('answering the checks unblocks confirmation, and the confirmation is record
   await expect(bar).toContainText('Confirmed by CIO: Fee and track record requests sent');
 
   await open(page, '#/screening', 'Screening');
-  await expect(page.locator(`#tbl tr[data-id="${FUNDS.delta.id}"]`)).toContainText('Confirmed');
+  const row = page.locator(`#tbl tr[data-id="${FUNDS.delta.id}"]`);
+  await expect(row).toContainText('Confirmed');
+  // The result is written into the fund's PIPELINE.md row (decision G3), and its status is left alone.
+  await expect(row).toContainText('Triaged');
+  await open(page, `#/fund/${FUNDS.delta.id}`, FUNDS.delta.manager);
+  await expect(page.locator('.page')).toContainText('Under review (confirmed)');
+  await expect(page.locator('.page')).toContainText('Manager to provide the requested documents');
 });
