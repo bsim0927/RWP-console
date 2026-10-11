@@ -12,7 +12,7 @@ test('lists every indexed data room with its latest disposition', async ({ page 
 
 test('filters narrow the table and their counts agree with it', async ({ page }) => {
   await open(page, '#/screening', 'Screening');
-  for (const [f, expected] of [['unscreened', 1], ['screened', 2], ['review', 2], ['all', 3]]) {
+  for (const [f, expected] of [['unscreened', 1], ['screened', 2], ['review', 2], ['late', 1], ['all', 3]]) {
     const btn = page.locator(`#seg button[data-f="${f}"]`);
     await btn.click();
     await expect(btn.locator('.c')).toHaveText(String(expected));

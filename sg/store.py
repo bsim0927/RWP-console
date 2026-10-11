@@ -7,6 +7,7 @@ gate records, catalog documents), so callers do not change shape. Gates live in 
 import time
 from datetime import UTC, datetime
 
+from psycopg import sql
 from psycopg.types.json import Json
 
 from . import db
@@ -214,6 +215,53 @@ def catalog_summaries():
     with db.tx() as c:
         rows = c.execute("select room_id, summary from catalogs").fetchall()
     return {r["room_id"]: r["summary"] for r in rows}
+
+
+# ---------- intake ----------
+
+INTAKE_FIELDS = ("referred_by", "owner", "sponsor_deadline", "filed_on", "share_class")
+INTAKE_DATES = ("sponsor_deadline", "filed_on")
+_INTAKE_SELECT = """select fund_id, referred_by, owner, to_char(sponsor_deadline, 'YYYY-MM-DD') as sponsor_deadline,
+                           to_char(filed_on, 'YYYY-MM-DD') as filed_on, share_class from intake"""
+
+
+def intakes():
+    """{fund_id: {referred_by, owner, sponsor_deadline, filed_on, share_class}}, dates as YYYY-MM-DD."""
+    with db.tx() as c:
+        rows = c.execute(_INTAKE_SELECT).fetchall()
+    return {r["fund_id"]: {k: r[k] for k in INTAKE_FIELDS} for r in rows}
+
+
+def intake(fund_id):
+    return intakes().get(fund_id) or dict.fromkeys(INTAKE_FIELDS)
+
+
+def save_intake(fund_id, fields):
+    """Set the given intake fields; blank clears one. Unknown fields and malformed dates are refused."""
+    bad = sorted(set(fields) - set(INTAKE_FIELDS))
+    if bad:
+        raise ValueError(f"unknown intake field {', '.join(bad)}")
+    vals = {k: (str(v).strip() or None) if v is not None else None for k, v in fields.items()}
+    for k in INTAKE_DATES:
+        if vals.get(k):
+            try:
+                datetime.strptime(vals[k], "%Y-%m-%d")  # type: ignore[arg-type]
+            except ValueError:
+                raise ValueError(f"{k} must be a date, YYYY-MM-DD") from None
+    if not vals:
+        return intake(fund_id)
+    cols = [sql.Identifier(k) for k in vals]
+    query = sql.SQL(
+        "insert into intake (fund_id, {cols}) values (%s, {vals}) "
+        "on conflict (fund_id) do update set {sets}, updated_at = now()"
+    ).format(
+        cols=sql.SQL(", ").join(cols),
+        vals=sql.SQL(", ").join(sql.Placeholder() * len(cols)),
+        sets=sql.SQL(", ").join(sql.SQL("{0} = excluded.{0}").format(k) for k in cols),
+    )
+    with db.tx() as c:
+        c.execute(query, (fund_id, *vals.values()))
+    return intake(fund_id)
 
 
 # ---------- policy ----------

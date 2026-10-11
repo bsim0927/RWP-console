@@ -38,6 +38,8 @@ export function ago(d) {
   if (s < 86400 * 120) return Math.floor(s / 86400) + 'd ago';
   return fmtDate(d);
 }
+// A calendar date (YYYY-MM-DD) at local midnight, so it never shows as the day before.
+export const day = s => new Date(s + 'T00:00:00');
 export const fmtDate = d => (d instanceof Date ? d : new Date(d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 export const fmtDT = d => (d instanceof Date ? d : new Date(d)).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 export const fmtTime = t => new Date(t * 1000).toLocaleTimeString('en-US', { hour12: false });
@@ -67,6 +69,14 @@ export const toneVar = t => ({ good: 'var(--good)', crit: 'var(--crit)', warn: '
 export function resultChip(r, review) {
   const t = resultTone(r);
   return `<span class="chip ${t}"><sl-icon name="${RESULT_ICON[t]}"></sl-icon>${esc(r || 'Not run')}</span>${review ? ` <span class="rv-flag" title="Low judge confidence, goes to an analyst"><sl-icon name="person-check"></sl-icon>Review</span>` : ''}`;
+}
+// The five-business-day screen clock from /api/funds (decision G4).
+export function clockChip(c) {
+  if (!c) return '';
+  const due = fmtDate(day(c.due));
+  if (c.done) return c.late ? `<span class="chip crit" title="Due ${due}"><sl-icon name="alarm"></sl-icon>Screened late</span>` : `<span class="chip good" title="Due ${due}"><sl-icon name="check2"></sl-icon>On time</span>`;
+  if (c.late) return `<span class="chip crit"><sl-icon name="alarm"></sl-icon>Late · due ${due}</span>`;
+  return `<span class="chip ${c.days_left <= 1 ? 'warn' : 'ghost'}"><sl-icon name="clock"></sl-icon>Due ${due} · ${c.days_left} business day${c.days_left === 1 ? '' : 's'} left</span>`;
 }
 // What a gate wants the analyst to know beyond its result, e.g. QP-only.
 export const flagChips = flags => (flags || []).map(f => `<span class="chip ghost flag"><sl-icon name="flag"></sl-icon>${esc(f)}</span>`).join('');

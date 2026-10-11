@@ -1,5 +1,5 @@
 import {
-  $, $$, api, cached, bust, esc, n, pct, ago, fmtDT, stampDate, gateName, sortGates, resultChip, flagChips, resultTone, resultIcon, dispChip, dispTone, dispIcon, dispShort, dispNote,
+  $, $$, api, cached, bust, esc, n, pct, ago, fmtDT, stampDate, gateName, sortGates, resultChip, flagChips, clockChip, day, fmtDate, resultTone, resultIcon, dispChip, dispTone, dispIcon, dispShort, dispNote,
   pipeChip, splitName, initials, waterfall, stepMatrix, lineChart, legend, hbars, markdown, openPreview, empty, skeleton, TIERS, TIER_COL, gateColor, GATE_ORDER, toast,
 } from '../lib.js';
 import { setCrumbs, screenDialog, jobs, onJobs } from '../app.js';
@@ -16,7 +16,9 @@ export async function render(el, r) {
   let funds = await cached('funds');
   let fund = funds.find(f => f.id === id);
   if (!fund) { el.innerHTML = `<div class="page">${empty('question-circle', 'Unknown fund', esc(id))}</div>`; return; }
-  const s = splitName(fund.name), p = fund.pipeline || {};
+  const s = splitName(fund.name), p = fund.pipeline || {}, it = fund.intake || {};
+  const owner = it.owner || p.Owner;
+  const dt = v => (v ? fmtDate(day(v)) : '–');
   setCrumbs([['Screening', '#/screening'], [fund.name]]);
   runId = runId || fund.runs[0] || null;
   const setHash = () => history.replaceState(null, '', `#/fund/${encodeURIComponent(id)}/${tab}${runId && ['screen', 'report'].includes(tab) ? '/' + runId : ''}`);
@@ -24,10 +26,18 @@ export async function render(el, r) {
   el.innerHTML = `<div class="page">
     <div class="fund-hd"><div class="av">${esc(initials(s.manager))}</div>
       <div style="min-width:0"><div class="eyebrow">${esc(fund.stage || 'Data room')}</div><h1>${esc(s.manager)}</h1>
-        <div class="meta"><span>${esc(p.Strategy || s.strategy || '')}</span>${pipeChip(p.Status)}${p.Owner ? `<span class="chip ghost"><sl-icon name="person"></sl-icon>${esc(p.Owner)}</span>` : ''}
+        <div class="meta"><span>${esc(p.Strategy || s.strategy || '')}</span>${pipeChip(p.Status)}${owner ? `<span class="chip ghost"><sl-icon name="person"></sl-icon>${esc(owner)}</span>` : ''}${clockChip(fund.clock)}
         ${fund.catalog ? `<span class="chip ghost"><sl-icon name="files"></sl-icon>${n(fund.catalog.files)} files · ${n(fund.catalog.pages)} pages</span>` : ''}</div></div>
       <div class="act"><a class="ghost-btn" href="#/files?path=${encodeURIComponent(fund.vpath)}"><sl-icon name="folder2-open"></sl-icon>Open folder</a>
         <button class="glow-btn" id="run"><sl-icon name="play-fill"></sl-icon>Run screen</button></div></div>
+    <div class="card" style="margin-bottom:16px" id="intake"><div class="hd"><h2 class="sec">Intake</h2><span class="sec-sub">entered by the analyst when the fund is filed</span><span class="sp"></span>
+      <button class="ghost-btn sm" id="intake-edit"><sl-icon name="pencil"></sl-icon>Edit intake</button></div><div class="facts3 rows">
+      <div><div class="k">Referred by</div><div class="v">${esc(it.referred_by || '–')}</div></div>
+      <div><div class="k">Owner</div><div class="v">${esc(it.owner || '–')}</div></div>
+      <div><div class="k">Share class screened</div><div class="v">${esc(it.share_class || 'Cheapest class open to individuals')}</div></div>
+      <div><div class="k">Filed</div><div class="v">${dt(it.filed_on)}</div></div>
+      <div><div class="k">Screen due</div><div class="v">${fund.clock ? dt(fund.clock.due) : '–'}</div></div>
+      <div><div class="k">Sponsor deadline</div><div class="v">${dt(it.sponsor_deadline)}</div></div></div></div>
     ${fund.pipeline ? `<div class="card" style="margin-bottom:16px"><div class="facts3">
       <div><div class="k">${p['Last action'] != null ? 'Last action' : 'Material on file'}</div><div class="v">${esc(p['Last action'] ?? p['Material on file'] ?? '–')}</div></div>
       <div style="grid-column:span 2"><div class="k">Next action</div><div class="v">${esc(p['Next action'] || '–')}</div></div></div></div>` : ''}
@@ -49,6 +59,7 @@ export async function render(el, r) {
   };
   $('#tabs', el).addEventListener('sl-tab-show', e => show(e.detail.name));
   $('#run', el).addEventListener('click', () => screenDialog(fund));
+  $('#intake-edit', el).addEventListener('click', () => intakeDialog(fund, async () => { bust('funds'); await render(el, r); }));
 
   // ---------- screen ----------
   let data = null;
@@ -261,4 +272,25 @@ export async function catalogTab(box, fund, rebuild) {
   $('#ct', box).addEventListener('sl-input', e => { st.text = e.target.value; draw(); });
   $('#ca', box).addEventListener('sl-change', e => { st.all = e.target.checked; draw(); });
   $('#rb', box).addEventListener('click', () => catalogTab(box, fund, true));
+}
+
+// Intake (decisions F2, B5, G4): who referred the fund, who owns it, when it was filed, the sponsor's
+// deadline and the share class RWP screens.
+function intakeDialog(fund, done) {
+  const it = fund.intake || {};
+  const fields = [['referred_by', 'Referred by', 'text'], ['owner', 'Owner', 'text'], ['share_class', 'Share class to screen', 'text', 'Blank screens the cheapest class open to individuals'],
+    ['filed_on', 'Filed', 'date', 'Starts the five-business-day screen clock'], ['sponsor_deadline', 'Sponsor deadline', 'date']];
+  const d = document.createElement('sl-dialog');
+  d.label = 'Intake';
+  d.innerHTML = `<div style="display:flex;flex-direction:column;gap:12px">${fields.map(([k, label, type, help]) => `<sl-input size="small" data-k="${k}" type="${type}" label="${label}" value="${esc(it[k] || '')}" ${help ? `help-text="${esc(help)}"` : ''}></sl-input>`).join('')}</div>
+    <div slot="footer" style="display:flex;gap:8px;justify-content:flex-end"><button class="ghost-btn" data-x>Cancel</button><button class="glow-btn" data-go><sl-icon name="check-lg"></sl-icon>Save intake</button></div>`;
+  document.body.append(d);
+  d.addEventListener('sl-after-hide', e => { if (e.target === d) d.remove(); });
+  d.querySelector('[data-x]').onclick = () => d.hide();
+  d.querySelector('[data-go]').onclick = async () => {
+    const body = Object.fromEntries($$('sl-input[data-k]', d).map(i => [i.dataset.k, i.value]));
+    try { await api('intake/' + encodeURIComponent(fund.id), { method: 'PUT', body: JSON.stringify(body) }); d.hide(); toast('Intake saved', 'good'); done(); }
+    catch (e) { toast(esc(e.message), 'crit'); }
+  };
+  customElements.whenDefined('sl-dialog').then(() => requestAnimationFrame(() => d.show()));
 }

@@ -50,3 +50,24 @@ test('an unscreened fund offers to run the screen instead of a broken tab', asyn
   await page.locator('#p-screen [data-go]').click();
   await expect(page.locator('sl-dialog[label="Run screen"]')).toHaveAttribute('open', '');
 });
+
+test('intake shows who referred the fund and the screen clock', async ({ page }) => {
+  await open(page, fundUrl(FUNDS.northwind), FUNDS.northwind.manager);
+  const intake = page.locator('#intake');
+  await expect(intake).toContainText('Adviser network');
+  await expect(intake).toContainText('Class I');
+  await expect(intake).toContainText('Sep 1, 2026');
+  await expect(intake).toContainText('Sep 8, 2026'); // five business days after filing
+  await expect(page.locator('.fund-hd')).toContainText('Screened late');
+});
+
+test('the analyst edits intake and the fund picks it up', async ({ page }) => {
+  await open(page, fundUrl(FUNDS.bluefield), FUNDS.bluefield.manager);
+  await page.locator('#intake-edit').click();
+  const dialog = page.locator('sl-dialog[label="Intake"]');
+  await dialog.locator('sl-input[data-k="referred_by"] input').fill('Consultant B');
+  await dialog.locator('sl-input[data-k="owner"] input').fill('Analyst C');
+  await dialog.locator('[data-go]').click();
+  await expect(page.locator('#intake')).toContainText('Consultant B');
+  await expect(page.locator('.fund-hd')).toContainText('Analyst C');
+});
