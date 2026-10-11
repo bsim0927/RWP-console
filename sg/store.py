@@ -221,6 +221,18 @@ def catalog(room_id):
     return head["summary"], [d["doc"] for d in docs]
 
 
+def latest_material():
+    """{room_id: the newest full date (YYYY-MM-DD) in a canonical document's name, never in the future}."""
+    with db.tx() as c:
+        rows = c.execute(
+            """select room_id, max(doc->>'as_of') as day from catalog_documents
+               where doc->>'canonical' = 'true' and doc->>'as_of' ~ '^\\d{4}-\\d{2}-\\d{2}$'
+                 and doc->>'as_of' <= to_char(now(), 'YYYY-MM-DD')
+               group by room_id"""
+        ).fetchall()
+    return {r["room_id"]: r["day"] for r in rows}
+
+
 def catalog_summaries():
     """{room_id: catalog summary}."""
     with db.tx() as c:

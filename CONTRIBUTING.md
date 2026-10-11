@@ -63,6 +63,9 @@ policies, so Supabase's public Data API sees nothing; the app connects to Postgr
   checks the live project has exactly `main`'s migrations and no schema changes made outside them.
 - The pre-database files (`runs/`, `catalog/`) can be imported once with
   `uv run python scripts/import_local_state.py --yes` (dry run without `--yes`).
+- Pipeline statuses and owners from the old `PIPELINE.md` are imported once with
+  `uv run python scripts/import_pipeline_md.py <PIPELINE.md> <data-root> --yes` (dry run without `--yes`).
+  After that the console reads no Markdown from the Drive; statuses move only in the console, by the CIO.
 
 ## Deployment (Vercel), planned
 

@@ -12,6 +12,7 @@ freely: nothing outside the workspace and the rwp_e2e database is touched.
 
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -21,14 +22,14 @@ from urllib.parse import urlsplit, urlunsplit
 import psycopg
 
 REPO = Path(__file__).resolve().parents[2]
+slug = lambda n: re.sub(r"[^\w.-]+", "_", n)  # a data room's fund id, as the console makes it
 
 # ---------- synthetic data rooms ----------
-# Each room: folder name, stage folder, and pages {file: [page text, ...]}. Quotes used by the
+# Each room: folder name and pages {file: [page text, ...]}. Rooms sit directly under the data root. Quotes used by the
 # scripted extractor below must appear verbatim on the cited page, or verify will reject them.
 
 ROOMS: dict[str, dict] = {
     "Northwind Capital - Private Credit Fund I": {
-        "stage": "1-Intake",
         "files": {
             "01 Offering/Northwind Private Credit Fund I - PPM.pdf": [
                 "NORTHWIND PRIVATE CREDIT FUND I\nPrivate Placement Memorandum\nTable of Contents\n"
@@ -46,7 +47,6 @@ ROOMS: dict[str, dict] = {
         },
     },
     "Acme Partners - Real Estate Opportunity Fund II": {
-        "stage": "1-Intake",
         "files": {
             "Acme REOF II - Term Sheet.pdf": [
                 "ACME REAL ESTATE OPPORTUNITY FUND II\nSummary of Terms\n"
@@ -62,7 +62,6 @@ ROOMS: dict[str, dict] = {
         },
     },
     "Bluefield Advisors - Infrastructure Income Fund": {
-        "stage": "2-Managers",
         "files": {
             "Bluefield Infrastructure Income - DDQ.pdf": [
                 "Due Diligence Questionnaire\nThe fund is open to accredited investors.\n"
@@ -73,7 +72,6 @@ ROOMS: dict[str, dict] = {
     # Screened, with no gate waiting on review: recipes confirm its disposition without moving the
     # review counts other recipes check.
     "Delta Ridge Partners - Evergreen Credit Fund": {
-        "stage": "2-Managers",
         "files": {
             "Delta Ridge Evergreen - Fact Sheet.pdf": [
                 "Delta Ridge Evergreen Credit Fund\nOpen to accredited investors.\nMinimum investment: $25,000.",
@@ -82,19 +80,13 @@ ROOMS: dict[str, dict] = {
     },
 }
 
-PIPELINE_MD = """# RWP Alternatives Pipeline
-
-Last updated: 2026-10-01
-
-## Active
-
-| Manager | Strategy | Status | Owner | Last action | Next action |
-|---|---|---|---|---|---|
-| Northwind Capital | Private Credit Fund I | **Under review** | Analyst A | Screened 2026-09-30 | Confirm hurdle |
-| Acme Partners | Real Estate Opportunity Fund II | **Triaged** | Analyst B | Extraction complete 2026-09-28 | Screen |
-| Bluefield Advisors | Infrastructure Income Fund | **Covered** | Analyst A | IC approved 2026-09-15 | Annual review |
-| Delta Ridge Partners | Evergreen Credit Fund | **Triaged** | Analyst B | Fact sheet received 2026-10-02 | Screen |
-"""
+# Pipeline statuses and owners, seeded the way scripts/import_pipeline_md.py imports them.
+STATUSES = {
+    "Northwind Capital - Private Credit Fund I": ("Under review", "Analyst A"),
+    "Acme Partners - Real Estate Opportunity Fund II": ("Triaged", "Analyst B"),
+    "Bluefield Advisors - Infrastructure Income Fund": ("Covered", "Analyst A"),
+    "Delta Ridge Partners - Evergreen Credit Fund": ("Triaged", "Analyst B"),
+}
 
 # field -> (file, page, quote, value), or a list of them. Quotes are verbatim from the pages above.
 FACTS: dict[str, dict[str, tuple[str, int, str, str] | list[tuple[str, int, str, str]]]] = {
@@ -239,10 +231,9 @@ def tiny_pdf(pages):
 
 def write_rooms(data_root):
     data_root.mkdir(parents=True, exist_ok=True)
-    (data_root / "PIPELINE.md").write_text(PIPELINE_MD)
     folders = []
     for name, room in ROOMS.items():
-        folder = data_root / room["stage"] / name
+        folder = data_root / name
         index = []
         for rel, pages in room["files"].items():
             pdf = folder / rel
@@ -366,11 +357,15 @@ def main(workspace):
     os.environ["DATABASE_URL"] = url = fresh_database()
 
     sys.path.insert(0, str(REPO))
-    from sg import store
+    from sg import fund_status, store
     from sg.catalog import build as build_catalog
     from sg.pipeline import run
 
     install_stubs()
+    for folder in folders:
+        status, owner = STATUSES[folder.name]
+        fund_status.import_status(slug(folder.name), status, "Imported from the fixture's pipeline")
+        store.save_intake(slug(folder.name), {"owner": owner})
     # Northwind was filed long before its screen, so the clock shows a late screen.
     store.save_intake(
         "Northwind_Capital_-_Private_Credit_Fund_I",

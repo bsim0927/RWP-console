@@ -11,34 +11,32 @@ const FILTERS = [
   ['late', 'Late', f => f.clock?.late],
   ['draft', 'Draft disposition', f => f.latest && !['confirmed', 'signed_off'].includes(f.latest.decision?.state)],
 ];
-// The intake owner wins over PIPELINE.md's, which may lag behind.
-const owner = f => f.intake?.owner || f.pipeline?.Owner;
+const owner = f => f.intake?.owner;
 const COLS = {
   name: f => f.name.toLowerCase(),
-  pipe: f => PIPE_ORDER.indexOf(f.pipeline?.Status ?? '') * -1,
+  pipe: f => PIPE_ORDER.indexOf(f.status?.status ?? '') * -1,
   disp: f => dispShort(f.latest?.disposition),
   run: f => f.latest?.run || '',
   due: f => f.clock?.due || '',
   pages: f => f.catalog?.pages ?? -1,
-  material: f => f.pipeline?.['Material on file'] || f.pipeline?.['Last action'] || '',
+  material: f => f.material_on || '',
 };
 
 export async function render(el, r) {
   setCrumbs([['Screening']]);
   el.innerHTML = `<div class="page">${skeleton(10)}</div>`;
   let funds = await cached('funds');
-  const st = { f: r.query.f || 'all', stage: r.query.stage || '', pipe: r.query.pipe || '', text: r.query.text || '', sort: r.query.sort || 'run', dir: r.query.dir || 'desc' };
+  const st = { f: r.query.f || 'all', pipe: r.query.pipe || '', text: r.query.text || '', sort: r.query.sort || 'run', dir: r.query.dir || 'desc' };
   const sync = () => history.replaceState(null, '', '#/screening?' + q(Object.fromEntries(Object.entries(st).filter(([, v]) => v))));
-  const pipeStatuses = [...new Set(funds.map(f => f.pipeline?.Status).filter(Boolean))].sort((a, b) => PIPE_ORDER.indexOf(a) - PIPE_ORDER.indexOf(b));
+  const pipeStatuses = [...new Set(funds.map(f => f.status?.status).filter(Boolean))].sort((a, b) => PIPE_ORDER.indexOf(a) - PIPE_ORDER.indexOf(b));
 
   el.innerHTML = `<div class="page">
-    <div class="ph"><div><h1>Screening</h1><p>Every indexed data room, its pipeline status from PIPELINE.md, and the latest result of each of the five gates.</p></div>
+    <div class="ph"><div><h1>Screening</h1><p>Every indexed data room, its pipeline status, and the latest result of each of the five gates.</p></div>
       <div class="act"><button class="ghost-btn" id="csv"><sl-icon name="download"></sl-icon>Export CSV</button></div></div>
     <div class="bar">
       <div class="seg" id="seg">${FILTERS.map(([k, label, fn]) => `<button data-f="${k}" class="${st.f === k ? 'on' : ''}">${label}<span class="c">${funds.filter(fn).length}</span></button>`).join('')}</div>
       <span class="sp"></span>
       <sl-input id="text" size="small" placeholder="Filter funds" clearable style="width:200px" value="${esc(st.text)}"><sl-icon name="filter" slot="prefix"></sl-icon></sl-input>
-      <sl-select id="stage" size="small" placeholder="All stages" clearable value="${esc(st.stage)}"><sl-option value="1-Intake">1-Intake</sl-option><sl-option value="2-Managers">2-Managers</sl-option></sl-select>
       <sl-select id="pipe" size="small" placeholder="Any pipeline status" clearable value="${esc(st.pipe.replaceAll(' ', '_'))}">${pipeStatuses.map(s => `<sl-option value="${esc(s.replaceAll(' ', '_'))}">${esc(s)}</sl-option>`).join('')}</sl-select>
     </div>
     <div class="card"><div class="tbl-wrap" id="tbl"></div></div></div>`;
@@ -46,8 +44,8 @@ export async function render(el, r) {
   const rows = () => {
     const fn = FILTERS.find(x => x[0] === st.f)[2];
     const t = st.text.toLowerCase();
-    let out = funds.filter(f => fn(f) && (!st.stage || f.stage === st.stage) && (!st.pipe || f.pipeline?.Status === st.pipe) &&
-      (!t || (f.name + ' ' + (f.pipeline?.Strategy || '') + ' ' + (owner(f) || '')).toLowerCase().includes(t)));
+    let out = funds.filter(f => fn(f) && (!st.pipe || f.status?.status === st.pipe) &&
+      (!t || (f.name + ' ' + (owner(f) || '')).toLowerCase().includes(t)));
     const k = COLS[st.sort] || COLS.run;
     out.sort((a, b) => { const x = k(a), y = k(b); return (x < y ? -1 : x > y ? 1 : 0) * (st.dir === 'asc' ? 1 : -1) || a.name.localeCompare(b.name); });
     return out;
@@ -59,11 +57,11 @@ export async function render(el, r) {
       <tr>${th('name', 'Fund')}${th('pipe', 'Pipeline')}<th>Owner</th>${th('material', 'Latest material')}<th>Gates</th>${th('disp', 'Disposition')}${th('due', 'Screen clock')}${th('run', 'Last screen', 'n')}${th('pages', 'Pages', 'n')}<th></th></tr>
       ${list.map(f => {
         const s = splitName(f.name), running = jobs.get(f.id)?.state.status === 'running';
-        const mat = f.pipeline?.['Material on file'];
+        const mat = f.material_on;
         return `<tr class="click" data-id="${esc(f.id)}">
         <td><div style="display:flex;gap:10px;align-items:center"><span class="fund-av" style="width:28px;height:28px;border-radius:7px;display:grid;place-items:center;background:var(--s3);font-size:10.5px;font-weight:700;color:var(--ink3);flex:none">${esc(initials(s.manager))}</span>
-          <div><div class="nm">${esc(s.manager)}</div><div class="sub">${esc(f.pipeline?.Strategy || s.strategy)}</div></div></div></td>
-        <td>${pipeChip(f.pipeline?.Status)}<div class="sub">${esc(f.stage || '')}</div></td>
+          <div><div class="nm">${esc(s.manager)}</div><div class="sub">${esc(s.strategy)}</div></div></div></td>
+        <td>${pipeChip(f.status?.status)}</td>
         <td class="${owner(f) === 'unassigned' ? 'dim' : ''}">${esc(owner(f) || '–')}</td>
         <td class="dim tnum" style="white-space:nowrap">${mat && /^\d{4}/.test(mat) ? `${esc(mat)}<div class="sub">${ago(new Date(mat))}</div>` : '–'}</td>
         <td>${running ? '<span class="chip accent"><span class="pulse"></span>&nbsp;Running</span>' : gateStrip(f.latest?.gates)}</td>
@@ -82,10 +80,9 @@ export async function render(el, r) {
   draw();
   $$('#seg button', el).forEach(b => b.addEventListener('click', () => { st.f = b.dataset.f; $$('#seg button', el).forEach(x => x.classList.toggle('on', x === b)); sync(); draw(); }));
   $('#text', el).addEventListener('sl-input', e => { st.text = e.target.value; sync(); draw(); });
-  $('#stage', el).addEventListener('sl-change', e => { st.stage = e.target.value; sync(); draw(); });
   $('#pipe', el).addEventListener('sl-change', e => { st.pipe = e.target.value.replaceAll('_', ' '); sync(); draw(); });
   $('#csv', el).addEventListener('click', () => downloadCSV('screening-queue.csv', rows().map(f => ({
-    fund: f.name, stage: f.stage, pipeline_status: f.pipeline?.Status, owner: owner(f), filed_on: f.intake?.filed_on, screen_due: f.clock?.due, late: f.clock?.late, disposition: f.latest?.disposition,
+    fund: f.name, pipeline_status: f.status?.status, owner: owner(f), filed_on: f.intake?.filed_on, screen_due: f.clock?.due, late: f.clock?.late, disposition: f.latest?.disposition,
     last_run: f.latest?.run, ...Object.fromEntries(Object.entries(f.latest?.gates || {}).map(([g, v]) => [g, v.result])), pages: f.catalog?.pages,
   }))));
   let sig = '';

@@ -26,7 +26,7 @@ the result. Low-confidence answers go to an analyst.
 | Data rooms (PDFs and `_index/pages.jsonl`) | Local disk, the data root (default `~/Desktop/RWP`) |
 | Runs, model calls, document catalogs | Supabase Postgres |
 | Intake, analyst reviews and checks, confirmed dispositions, screen notes | Supabase Postgres, every change kept |
-| Each fund's screen results (never its status) | Also written into its `PIPELINE.md` row (`RWP_PIPELINE_WRITE=0` turns this off) |
+| Each fund's pipeline status, moved only by the CIO | Supabase Postgres (`fund_status`), every move kept |
 | Gates and disposition policy | Supabase Postgres, edited and versioned in the console |
 | API keys and the database URL | `.env` (never committed) |
 
