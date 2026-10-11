@@ -15,7 +15,7 @@ class Search(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        self.room = self.root / "2-Managers" / "Monroe Capital - ABF"
+        self.room = self.root / "Monroe Capital - ABF"
         (self.room / "_index").mkdir(parents=True)
         rows = [
             {"file": PPM, "page": 1, "text": "PRIVATE PLACEMENT MEMORANDUM\nMonroe Capital ABF OpCo"},
@@ -36,7 +36,7 @@ class Search(unittest.TestCase):
             hits = self.search(q)
             self.assertTrue(hits, q)
             self.assertEqual((hits[0]["file"], hits[0]["page"], hits[0]["by_name"]), (PPM, 1, True), q)
-            self.assertEqual(hits[0]["path"], f"2-Managers/Monroe Capital - ABF/{PPM}")
+            self.assertEqual(hits[0]["path"], f"Monroe Capital - ABF/{PPM}")
 
     def test_name_match_lists_the_file_once(self):
         self.assertEqual(len(self.search("PPM.pdf")), 1)

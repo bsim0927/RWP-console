@@ -1,7 +1,7 @@
 // Unit tests for the pure helpers in web/js/lib.js: formatting, status vocabulary, escaping, markdown.
 import { describe, expect, it } from 'vitest';
 import {
-  bytes, dispNote, dispShort, dispTone, esc, extOf, gateName, markdown, mergedPath, n, pct,
+  bytes, dispNote, dispShort, dispTone, esc, extOf, gateName, markdown, n, pct,
   rawUrl, resultTone, sortGates, splitName, stampDate, initials,
 } from '../../web/js/lib.js';
 
@@ -77,10 +77,6 @@ describe('status vocabulary', () => {
 });
 
 describe('paths', () => {
-  it('mergedPath strips the Drive download part prefix', () => {
-    expect(mergedPath('RWP-20261006T224806Z-1-001/RWP/1-Intake/a.pdf')).toBe('1-Intake/a.pdf');
-    expect(mergedPath('1-Intake/a.pdf')).toBe('1-Intake/a.pdf');
-  });
   it('rawUrl encodes the path and adds a page anchor', () => {
     expect(rawUrl('a b/c&d.pdf', 3)).toBe('/api/raw?path=a+b%2Fc%26d.pdf#page=3');
     expect(rawUrl('x.pdf')).toBe('/api/raw?path=x.pdf');

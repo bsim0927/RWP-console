@@ -83,6 +83,8 @@ def classify(path):
         if re.search(rx, name, re.I):
             return t, "filename"
     for folder in reversed(parts[:-1]):
+        if re.match(r"\d{2} ", folder):
+            continue  # RWP's own numbered folders (01 Inbound, 02 Analysis...) are filing, not document types
         for t, rx in TYPE_RULES:
             if re.search(rx, folder, re.I):
                 return t, f"folder: {folder}"
@@ -204,7 +206,7 @@ def build(folder):
         pdf = room.folder / path
         byte_hash = hashlib.sha256(pdf.read_bytes()).hexdigest()[:16] if pdf.exists() else None
         doc_type, type_source = classify(path)
-        tier = "external" if path.startswith("02 Analysis/") else TIER.get(doc_type, "review")
+        tier = TIER.get(doc_type, "review")
         as_of, sort_key, date_source = None, None, None
         for i, part in enumerate(reversed(path.split("/"))):
             # Filename first, then the nearest folder: F&FC files its ADVs as 2022/F&FC ADV Part 2.pdf.

@@ -27,7 +27,7 @@ LOG: collections.deque[dict] = collections.deque(maxlen=1000)  # in-memory event
 WEB = ROOT / "web"
 
 DATA_ROOT = Path(
-    sys.argv[1] if len(sys.argv) > 1 else os.environ.get("RWP_DATA_ROOT", str(Path.home() / "Desktop/RWP"))
+    sys.argv[1] if len(sys.argv) > 1 else os.environ.get("RWP_DATA_ROOT", str(Path.home() / "Desktop/RWP-funds"))
 ).resolve()
 slug = lambda n: re.sub(r"[^\w.-]+", "_", n)
 mimetypes.add_type("text/javascript", ".js")
@@ -57,65 +57,34 @@ def inside(base, p):
         return False
 
 
-# ---------- one file tree over the Drive download parts ----------
-# A large Drive download arrives as RWP-<stamp>-1-001, -002, ... each holding part of the same RWP/ tree.
-# The Files view lays the parts over each other so the analyst sees one RWP/ folder. Nothing on disk moves.
-
-DRIVE_PART = re.compile(r".+-\d{8}T\d{6}Z-\d+-\d{3}$")
+# ---------- the file tree ----------
+# The data root is one folder per fund, holding only what the fund sent (scripts/reorganize_data_root.py builds
+# it from a Drive download). Folder names inside a fund are kept as they are and mean nothing to the console.
 
 
-def layers():
-    parts = [p for p in sorted(DATA_ROOT.iterdir()) if p.is_dir() and DRIVE_PART.match(p.name)]
-    if not parts:
-        return [DATA_ROOT]
+def listing(v):
+    """The entries of folder v (relative to the data root), folders first, or None if it is not one."""
+    d = DATA_ROOT / v
+    if not inside(DATA_ROOT, d) or not d.is_dir():
+        return None
     out = []
-    for p in parts:
-        kids = [c for c in p.iterdir() if c.is_dir() and not c.name.startswith(".")]
-        out.append(kids[0] if len(kids) == 1 and not any(c.is_file() for c in p.iterdir()) else p)
-    return out
-
-
-def to_virtual(rel):
-    """Real path (relative to the data root) -> path inside the merged tree."""
-    p = (DATA_ROOT / rel).resolve()
-    for layer in layers():
-        if p.is_relative_to(layer.resolve()):
-            v = p.relative_to(layer.resolve())
-            return "" if str(v) == "." else str(v)
-    return rel
-
-
-def real_candidates(v):
-    return [layer / v for layer in layers() if inside(layer, layer / v) and (layer / v).exists()]
-
-
-def merged_listing(v):
-    entries: dict[str, dict] = {}
-    for d in real_candidates(v):
-        if not d.is_dir():
+    for c in d.iterdir():
+        if c.name.startswith(".") or c.name == "_index":
             continue
-        for c in d.iterdir():
-            if c.name.startswith(".") or c.name == "_index":
-                continue
-            st = c.stat()
-            e = entries.get(c.name)
-            room = c.is_dir() and (c / "_index" / "pages.jsonl").exists()
-            if e:  # the same folder in more than one part
-                e["parts"] += 1
-                e["mtime"] = max(e["mtime"], st.st_mtime)
-                e["room"] = e["room"] or room
-                continue
-            entries[c.name] = {
+        st = c.stat()
+        path = f"{v}/{c.name}" if v else c.name
+        out.append(
+            {
                 "name": c.name,
                 "dir": c.is_dir(),
                 "size": st.st_size,
                 "mtime": st.st_mtime,
-                "path": f"{v}/{c.name}" if v else c.name,
-                "real": str(c.relative_to(DATA_ROOT)),
-                "room": room,
-                "parts": 1,
+                "path": path,
+                "real": path,
+                "room": c.is_dir() and (c / "_index" / "pages.jsonl").exists(),
             }
-    return sorted(entries.values(), key=lambda e: (not e["dir"], e["name"].lower()))
+        )
+    return sorted(out, key=lambda e: (not e["dir"], e["name"].lower()))
 
 
 # ---------- where each fund stands ----------
@@ -302,12 +271,8 @@ class H(BaseHTTPRequestHandler):
         return self.send(p.read_bytes(), mimetypes.guess_type(p.name)[0] or "application/octet-stream")
 
     def data_path(self, qs):
-        rel = qs.get("path", [""])[0].lstrip("/")
-        p = DATA_ROOT / rel
-        if inside(DATA_ROOT, p) and p.exists():
-            return p
-        hits = real_candidates(rel)  # a path in the merged tree
-        return hits[0] if hits else None
+        p = DATA_ROOT / qs.get("path", [""])[0].lstrip("/")
+        return p if inside(DATA_ROOT, p) and p.exists() else None
 
     def body(self):
         return json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
@@ -354,7 +319,6 @@ class H(BaseHTTPRequestHandler):
                         "id": fid,
                         "name": folder.name,
                         "path": str(rel),
-                        "vpath": to_virtual(str(rel)),
                         "runs": rs,
                         "latest": with_review(latest.get(fid), reviewed.get(fid)),
                         "catalog": catalogs.get(fid),
@@ -438,17 +402,11 @@ class H(BaseHTTPRequestHandler):
             fund = qs.get("fund", [None])[0]
             return self.send(search(qs.get("q", [""])[0], {fund: rooms[fund]} if fund in rooms else rooms))
         if parts == ["api", "fs"]:
-            v = to_virtual(qs.get("path", [""])[0].strip("/"))
-            if v and not any(d.is_dir() for d in real_candidates(v)):
+            v = qs.get("path", [""])[0].strip("/")
+            entries = listing(v)
+            if entries is None:
                 return self.send({"error": "not a folder"}, code=404)
-            return self.send(
-                {
-                    "path": v,
-                    "root": layers()[0].name if len(layers()) > 1 else DATA_ROOT.name,
-                    "parts": len(layers()),
-                    "entries": merged_listing(v),
-                }
-            )
+            return self.send({"path": v, "root": DATA_ROOT.name, "entries": entries})
         if parts == ["api", "raw"]:
             p = self.data_path(qs)
             if p is None or not p.is_file():

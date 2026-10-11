@@ -1,7 +1,7 @@
 import { $, $$, api, cached, esc, q, bytes, ago, fileIcon, extOf, openPreview, empty } from '../lib.js';
 import { setCrumbs } from '../app.js';
 
-// Paths here are paths in the merged RWP tree: the server lays the Drive download parts over each other.
+// Paths are relative to the data root: one folder per fund.
 export async function render(el, r) {
   setCrumbs([['Files']]);
   el.innerHTML = `<div class="page"><div class="ph"><div><h1>Files</h1><p>The RWP drive as one folder tree, with original file names and folders. Indexed data rooms are tagged.</p></div></div>
@@ -42,7 +42,7 @@ export async function browser(box, { root, path, navigate, embedded }) {
       const t = text.toLowerCase();
       const ents = res.entries.filter(e => !t || e.name.toLowerCase().includes(t));
       $('#fbl', box).innerHTML = ents.length ? `<table class="t"><tr><th>Name</th><th>Modified</th><th class="n">Size</th><th>Kind</th></tr>${ents.map(e => {
-        const f = e.room && funds.find(x => x.vpath === e.path);
+        const f = e.room && funds.find(x => x.path === e.path);
         return `<tr class="click" data-p="${esc(e.path)}" data-real="${esc(e.real)}" data-dir="${e.dir ? 1 : ''}"><td>${fileIcon(e.name, e.dir)}<span class="nm" style="font-weight:${e.dir ? 550 : 450}">${esc(e.name)}</span>${f ? `<a class="room-tag" href="#/fund/${encodeURIComponent(f.id)}">Data room</a>` : ''}</td>
           <td class="dim tnum">${ago(new Date(e.mtime * 1000))}</td><td class="n dim tnum">${e.dir ? '–' : bytes(e.size)}</td><td class="dim">${e.dir ? 'Folder' : esc(extOf(e.name).toUpperCase())}</td></tr>`;
       }).join('')}</table>` : empty('folder', text ? 'No matches' : 'Empty folder');
