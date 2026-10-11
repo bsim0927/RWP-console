@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sg import clock, disposition, gate_store, monitor, policy_store, review, store  # noqa: E402
+from sg import clock, disposition, gate_store, monitor, note, policy_store, review, store  # noqa: E402
 from sg.catalog import build as build_catalog  # noqa: E402
 from sg.pipeline import ROOT, Tracker, load_gates, run  # noqa: E402
 
@@ -494,6 +494,8 @@ class H(BaseHTTPRequestHandler):
                     "room_path": str(room.relative_to(DATA_ROOT)) if room else None,
                 }
             )
+        if parts[:2] == ["api", "note"] and len(parts) == 4:
+            return self.send(note.versions(parts[2], parts[3]))
         if parts[:2] == ["api", "job"] and len(parts) == 3:
             j = JOBS.get(parts[2])
             if not j:
@@ -598,11 +600,20 @@ class H(BaseHTTPRequestHandler):
     def review_write(self):
         """Reviewers, gate reviews and manual-check answers. Each answer is a new row, never an edit."""
         path = urlparse(self.path).path
-        if path not in ("/api/reviewers", "/api/review", "/api/check", "/api/disposition"):
+        parts = [unquote(p) for p in path.split("/") if p]
+        is_note = parts[:2] == ["api", "note"] and len(parts) == 4
+        if path not in ("/api/reviewers", "/api/review", "/api/check", "/api/disposition") and not is_note:
             return False
         b = self.body()
         try:
-            if path == "/api/reviewers":
+            if is_note:
+                fid, stamp = parts[2], parts[3]
+                out = (
+                    note.draft(fid, stamp)
+                    if b.get("draft")
+                    else note.edit(fid, stamp, b.get("body"), b.get("reviewer"))
+                )
+            elif path == "/api/reviewers":
                 out = review.save_reviewer(b)
             elif path == "/api/disposition":
                 out = disposition.confirm(b.get("fund"), b.get("run"), b.get("reviewer"), b.get("reason"))

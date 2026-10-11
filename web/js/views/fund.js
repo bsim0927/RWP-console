@@ -7,7 +7,7 @@ import { browser } from './files.js';
 import { reviewPanel, reviewNote, currentReviewer } from '../review.js';
 import { searchPanel } from './search.js';
 
-const TABS = [['screen', 'Screen', 'funnel'], ['catalog', 'Catalog', 'journal-text'], ['files', 'Files', 'folder2-open'], ['search', 'Search', 'search'], ['history', 'History', 'clock-history'], ['report', 'Report', 'file-earmark-text']];
+const TABS = [['screen', 'Screen', 'funnel'], ['catalog', 'Catalog', 'journal-text'], ['files', 'Files', 'folder2-open'], ['search', 'Search', 'search'], ['history', 'History', 'clock-history'], ['note', 'Note', 'journal-richtext'], ['report', 'Report', 'file-earmark-text']];
 
 export async function render(el, r) {
   const id = r.parts[0];
@@ -22,7 +22,7 @@ export async function render(el, r) {
   const dt = v => (v ? fmtDate(day(v)) : '–');
   setCrumbs([['Screening', '#/screening'], [fund.name]]);
   runId = runId || fund.runs[0] || null;
-  const setHash = () => history.replaceState(null, '', `#/fund/${encodeURIComponent(id)}/${tab}${runId && ['screen', 'report'].includes(tab) ? '/' + runId : ''}`);
+  const setHash = () => history.replaceState(null, '', `#/fund/${encodeURIComponent(id)}/${tab}${runId && ['screen', 'note', 'report'].includes(tab) ? '/' + runId : ''}`);
 
   el.innerHTML = `<div class="page">
     <div class="fund-hd"><div class="av">${esc(initials(s.manager))}</div>
@@ -56,6 +56,7 @@ export async function render(el, r) {
     if (k === 'files') return browser(box, { root: fund.vpath, path: fund.vpath, embedded: true });
     if (k === 'search') return searchPanel(box, { fund: fund.id });
     if (k === 'history') return historyTab(box);
+    if (k === 'note') return noteTab(box);
     if (k === 'report') return reportTab(box);
   };
   $('#tabs', el).addEventListener('sl-tab-show', e => show(e.detail.name));
@@ -107,7 +108,7 @@ export async function render(el, r) {
       <div class="card"><div class="hd"><h2 class="sec">Run timeline</h2><span class="sec-sub">${sm.seconds ?? ''}s total</span><span class="sp"></span>
         <div class="seg" id="tlseg"><button class="on" data-v="w">Timeline</button><button data-v="m">Step table</button></div></div>
         <div class="bd" id="tl">${steps.length ? waterfall(steps, gates.map(g => g.gate)) : '<span class="dim">This run predates step timing.</span>'}</div></div>` : ''}`;
-    $('#runsel', box)?.addEventListener('sl-change', e => { runId = e.target.value; setHash(); screenTab(box); });
+    $('#runsel', box)?.addEventListener('sl-change', e => { runId = e.target.value; setHash(); done.delete('note'); done.delete('report'); screenTab(box); });
     $$('.gcard', box).forEach(b => b.addEventListener('click', () => gateDrawer(gates.find(g => g.gate === b.dataset.g))));
     $$('#marketing .cite', box).forEach(c => c.addEventListener('click', () => openPreview(data.room_path + '/' + c.dataset.file, { page: +c.dataset.page, quote: c.dataset.quote })));
     $('#dc-go', box)?.addEventListener('click', async () => {
@@ -200,7 +201,39 @@ export async function render(el, r) {
       ${rows.map((r, i) => ({ r, i })).reverse().map(({ r, i }) => `<tr class="click" data-run="${r.run}"><td class="dim">${i + 1}</td><td class="tnum">${fmtDT(stampDate(r.run))}</td><td class="mono dim">${esc(r.extractor)} → ${esc(r.judge)}</td>
         ${GATE_ORDER.map(g => `<td>${r.gates[g] ? `<span class="chip ${resultTone(r.gates[g].result)}" style="padding:0 6px"><sl-icon name="${resultIcon(r.gates[g].result)}"></sl-icon>${r.gates[g].min_confidence != null ? pct(r.gates[g].min_confidence) : ''}</span>` : ''}</td>`).join('')}
         <td>${dispChip(r.disposition)}</td><td class="n dim tnum">${r.seconds != null ? r.seconds + 's' : ''}</td></tr>`).join('')}</table></div></div>`;
-    $$('tr[data-run]', box).forEach(tr => tr.addEventListener('click', () => { runId = tr.dataset.run; done.delete('screen'); done.delete('report'); $('#tabs', el).show('screen'); }));
+    $$('tr[data-run]', box).forEach(tr => tr.addEventListener('click', () => { runId = tr.dataset.run; done.delete('screen'); done.delete('note'); done.delete('report'); $('#tabs', el).show('screen'); }));
+  }
+
+  // ---------- note (decisions F1, F4) ----------
+  async function noteTab(box, editing = false) {
+    if (!runId) { box.innerHTML = `<div class="card">${empty('journal-richtext', 'No screen note', 'Run a screen first; the tool drafts the note from it.')}</div>`; return; }
+    box.innerHTML = skeleton(5);
+    const vs = await api(`note/${encodeURIComponent(id)}/${runId}`);
+    const draftBtn = label => `<button class="${vs.length ? 'ghost-btn sm' : 'glow-btn'}" id="nt-draft"><sl-icon name="arrow-repeat"></sl-icon>${label}</button>`;
+    if (!vs.length) {
+      box.innerHTML = `<div class="card">${empty('journal-richtext', 'No note for this run yet', 'The tool drafts the one-page note and the request list from the gates, findings and intake; you edit it.')}<div style="text-align:center;padding-bottom:22px">${draftBtn('Draft the screen note')}</div></div>`;
+    } else {
+      const cur = vs[0];
+      const who = cur.author === 'tool' ? `Tool draft${cur.model ? ' · summary by ' + esc(cur.model) : ''}` : `Edited by ${esc(cur.reviewer)}`;
+      box.innerHTML = `<div class="bar"><span class="chip ghost">Version ${vs.length}</span><span class="dim" style="font-size:12px">${who} · ${fmtDT(cur.at)}</span><span class="sp"></span>
+        ${editing ? '<button class="ghost-btn sm" id="nt-cancel">Cancel</button><button class="glow-btn sm" id="nt-save"><sl-icon name="check-lg"></sl-icon>Save note</button>'
+          : `${draftBtn('Redraft')}<button class="ghost-btn sm" id="nt-edit"><sl-icon name="pencil"></sl-icon>Edit</button><button class="ghost-btn sm" id="nt-copy"><sl-icon name="clipboard"></sl-icon>Copy markdown</button>`}</div>
+        <div class="card" id="note"><div class="bd">${editing ? `<textarea class="fi" id="nt-body" aria-label="Screen note" data-mono spellcheck="true" style="min-height:60vh;font-size:12.5px;line-height:1.6">${esc(cur.body)}</textarea>` : markdown(cur.body)}</div></div>
+        ${vs.length > 1 ? `<div class="card"><div class="hd"><h2 class="sec">Earlier versions</h2><span class="sec-sub">every draft and edit is kept</span></div><div class="bd flush"><table class="t compact">${vs.slice(1).map((v, i) => `<tr><td class="dim">v${vs.length - 1 - i}</td><td>${v.author === 'tool' ? 'Tool draft' : 'Edited by ' + esc(v.reviewer)}</td><td class="tnum dim">${fmtDT(v.at)}</td></tr>`).join('')}</table></div></div>` : ''}`;
+      $('#nt-edit', box)?.addEventListener('click', () => noteTab(box, true));
+      $('#nt-cancel', box)?.addEventListener('click', () => noteTab(box));
+      $('#nt-copy', box)?.addEventListener('click', () => navigator.clipboard.writeText(cur.body).then(() => toast('Markdown copied', 'good')));
+      $('#nt-save', box)?.addEventListener('click', async () => {
+        const me = await currentReviewer();
+        try { await api(`note/${encodeURIComponent(id)}/${runId}`, { method: 'POST', body: JSON.stringify({ body: $('#nt-body', box).value, reviewer: me?.id }) }); toast('Note saved', 'good'); noteTab(box); }
+        catch (e) { toast(esc(e.message), 'crit'); }
+      });
+    }
+    $('#nt-draft', box)?.addEventListener('click', async e => {
+      e.currentTarget.disabled = true;
+      try { await api(`note/${encodeURIComponent(id)}/${runId}`, { method: 'POST', body: JSON.stringify({ draft: true }) }); toast('Note drafted', 'good'); noteTab(box); }
+      catch (err) { toast(esc(err.message), 'crit'); noteTab(box); }
+    });
   }
 
   // ---------- report ----------

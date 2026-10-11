@@ -81,7 +81,7 @@ function gateCard(g, i, total) {
     <button class="ghost-btn sm" data-del="${esc(g.file)}" title="Remove gate"><sl-icon name="trash"></sl-icon></button></div>
     <div class="bd">${p.static_result ? `<p class="muted" style="margin:0">${esc((g.text.match(/^#\s*(.*)$/m) || [])[1] || 'Not automated: the gate returns its manual result until an analyst closes it.')}</p>` : `
       <div class="grid g2"><div>
-        <div class="eyebrow">Fields extracted</div><table class="t compact">${(ex.fields || []).map(f => `<tr><td class="mono">${esc(f.name)}${f.recurring ? ' <span class="chip ghost" style="height:18px">recurring</span>' : ''}</td><td class="dim">${esc(f.description || '')}</td></tr>`).join('')}</table>
+        <div class="eyebrow">Fields extracted</div><table class="t compact">${(ex.fields || []).map(f => `<tr><td class="mono">${esc(f.name)}${f.recurring ? ' <span class="chip ghost" style="height:18px">recurring</span>' : ''}</td><td class="dim">${esc(f.description || '')}${f.ask ? `<div class="sub">If missing, ask for: ${esc(f.ask)}</div>` : ''}</td></tr>`).join('')}</table>
         ${ex.sources ? `<div class="eyebrow" style="margin-top:14px">Sources</div><div style="display:flex;gap:5px;flex-wrap:wrap">${(ex.sources.doc_types || []).map(d => `<span class="chip ghost">${esc(d)}</span>`).join('')}</div>` : ''}
       </div><div>
         <div class="eyebrow">Judge questions</div>${(p.questions || []).map(qq => `<div style="margin-bottom:8px"><span class="mono dim">${esc(qq.id)} · ${esc(qq.type)}${qq.options ? ` · ${esc(qq.options.join(' / '))}` : ''}</span><div>${esc(qq.q)}</div></div>`).join('')}
@@ -251,7 +251,7 @@ async function editor(file, parsed, text, done) {
         <label>Section title patterns<small>one regular expression per line</small>${area('extractor.sources.sections', 'lines', 'key (person|man)', 3)}</label>
         <label>Instructions to the extractor${area('extractor.rules', '', 'Quote the clause that…', 3)}</label></div></div>
       <div class="ed-sec"><div class="ed-h">Fields to extract<small>each becomes a cited fact with a verbatim quote</small><span class="sp"></span><button class="ghost-btn sm" data-add="fields"><sl-icon name="plus-lg"></sl-icon>Field</button></div>
-        ${fields.map((f, i) => `<div class="ed-row">${inp(`extractor.fields.${i}.name`, '', 'field_name', 'style="max-width:220px" data-mono')}${inp(`extractor.fields.${i}.description`, '', 'What to find')}
+        ${fields.map((f, i) => `<div class="ed-row">${inp(`extractor.fields.${i}.name`, '', 'field_name', 'style="max-width:220px" data-mono')}${inp(`extractor.fields.${i}.description`, '', 'What to find')}${inp(`extractor.fields.${i}.ask`, '', 'If missing, ask the manager for…', 'title="Goes on the screen note\'s request list when this field keeps the gate open"')}
           <label class="ed-inline" title="Summed into total_pct by the code check"><input type="checkbox" class="fi-cb" data-k="extractor.fields.${i}.recurring" data-t="bool" ${f.recurring ? 'checked' : ''}>recurring %</label>${rowBtns('extractor.fields', i, fields.length)}</div>`).join('')}</div>
       <div class="ed-sec"><div class="ed-h">Judge questions<small>bool gives P(true); choice gives the top option and its probability as id_p</small><span class="sp"></span><button class="ghost-btn sm" data-add="questions"><sl-icon name="plus-lg"></sl-icon>Question</button></div>
         ${qs.map((q, i) => `<div class="ed-row" style="align-items:flex-start">${inp(`questions.${i}.id`, '', 'question_id', 'style="max-width:170px" data-mono')}
@@ -355,7 +355,7 @@ function clean(g) {
     if (ex.sources) { for (const k of Object.keys(ex.sources)) if (Array.isArray(ex.sources[k]) && !ex.sources[k].length) delete ex.sources[k]; if (!Object.keys(ex.sources).length) delete ex.sources; }
     if (Array.isArray(ex.keywords) && !ex.keywords.length) delete ex.keywords;
     if (ex.rules === '') delete ex.rules;
-    (ex.fields || []).forEach(f => { if (!f.recurring) delete f.recurring; if (f.description === '') delete f.description; });
+    (ex.fields || []).forEach(f => { if (!f.recurring) delete f.recurring; if (f.description === '') delete f.description; if (!f.ask) delete f.ask; });
   }
   (o.derive || []).forEach(r => { if (r.if === '' || r.if == null) delete r.if; });
   (o.flags || []).forEach(f => { if (f.if === '' || f.if == null) delete f.if; });

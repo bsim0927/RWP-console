@@ -181,14 +181,30 @@ class ShippedGates(unittest.TestCase):
                 self.assertLessEqual(set(g), required | {"checks", "review_if"})
                 self.assertLessEqual({r["then"] for r in g["derive"]}, set(gate_store.RESULTS))
 
+    def test_fields_that_keep_a_gate_open_say_what_to_ask_for(self):
+        asks = {
+            g["id"]: [f["name"] for f in g["extractor"]["fields"] if f.get("ask")]
+            for g in load_gates()
+            if g.get("extractor")
+        }
+        self.assertEqual(
+            asks,
+            {
+                "investor_eligibility": ["investor_standard"],
+                "total_annual_cost": ["management_fee"],
+                "operability": ["administrator", "auditor", "valuation_policy"],
+                "track_record": ["net_return"],
+            },
+        )
+
     def test_the_seeded_gates_are_kept_in_history(self):
         # The screen-decisions migration replaced four gates; their seeded versions stay restorable.
         kept = {(h["id"], h["version"]) for h in gate_store.history()}
         for gid in ("investor_eligibility", "total_annual_cost", "operability", "track_record"):
             self.assertIn((gid, 2), kept)
-        live = {g["id"]: g for g in gate_store.current()}
-        self.assertEqual(live["track_record"]["version"], 3)
-        self.assertEqual(yaml.safe_load(live["track_record"]["text"])["version"], 3)
+        for g in gate_store.current():
+            with self.subTest(gate=g["id"]):
+                self.assertEqual(yaml.safe_load(g["text"])["version"], g["version"])  # the row and its YAML agree
 
 
 @pytest.mark.usefixtures("db")
