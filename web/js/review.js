@@ -8,6 +8,12 @@ const getMe = () => { try { return localStorage.getItem(KEY); } catch { return n
 const setMe = v => { try { localStorage.setItem(KEY, v); } catch { /* storage blocked */ } };
 const RESULTS = ['Pass', 'Fail', 'Incomplete'];
 
+/** The reviewer this browser reviews as: the last one picked, else the first active reviewer. */
+export async function currentReviewer() {
+  const people = (await cached('reviewers', 60000)).filter(p => p.active);
+  return people.find(p => p.id === getMe()) || people[0] || null;
+}
+
 /** Plain-English state of a reviewed gate, for cards and the drawer header. */
 export function reviewNote(eff) {
   if (!eff) return '';

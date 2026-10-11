@@ -102,6 +102,9 @@ export const dispNote = d => (d && d.match(/\((.*)\)$/)?.[1]) || '';
 const DISP_ICON = { good: 'shield-check', crit: 'slash-circle', warn: 'hourglass-split', none: 'circle' };
 export const dispChip = (d, lg) => { const t = dispTone(d); return `<span class="chip ${t} ${lg ? 'lg' : ''}" title="${esc(d || '')}"><sl-icon name="${DISP_ICON[t]}"></sl-icon>${esc(dispShort(d))}</span>`; };
 export const dispIcon = d => DISP_ICON[dispTone(d)];
+// Where a disposition stands (decision F5): a draft until an analyst confirms it; "not covered" also needs the CIO.
+const DECISION = { draft: ['ghost', 'pencil-square', 'Draft'], confirmed: ['good', 'patch-check', 'Confirmed'], awaiting_signoff: ['warn', 'hourglass-split', 'Awaiting CIO sign-off'], signed_off: ['good', 'patch-check', 'Signed off'] };
+export const decisionChip = d => { if (!d) return ''; const [t, icon, label] = DECISION[d.state] || DECISION.draft; return `<span class="chip ${t}"><sl-icon name="${icon}"></sl-icon>${label}</span>`; };
 
 // Pipeline statuses from PIPELINE.md, in process order.
 export const PIPE_ORDER = ['Not reviewed', 'Triaged', 'Under review', 'Deep DD', 'IC ready', 'Covered', 'Watch', 'Reviewed and not covered'];

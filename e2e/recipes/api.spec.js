@@ -5,7 +5,7 @@ test('/api/funds returns the fixture rooms with the shape the UI reads', async (
   const res = await request.get('/api/funds');
   expect(res.ok()).toBeTruthy();
   const funds = await res.json();
-  expect(funds).toHaveLength(3);
+  expect(funds).toHaveLength(4);
   for (const f of funds) {
     expect(f).toEqual(expect.objectContaining({ id: expect.any(String), name: expect.any(String), runs: expect.any(Array) }));
   }

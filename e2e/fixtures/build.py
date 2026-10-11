@@ -68,6 +68,16 @@ ROOMS: dict[str, dict] = {
             ],
         },
     },
+    # Screened, with no gate waiting on review: recipes confirm its disposition without moving the
+    # review counts other recipes check.
+    "Delta Ridge Partners - Evergreen Credit Fund": {
+        "stage": "2-Managers",
+        "files": {
+            "Delta Ridge Evergreen - Fact Sheet.pdf": [
+                "Delta Ridge Evergreen Credit Fund\nOpen to accredited investors.\nMinimum investment: $25,000.",
+            ],
+        },
+    },
 }
 
 PIPELINE_MD = """# RWP Alternatives Pipeline
@@ -81,6 +91,7 @@ Last updated: 2026-10-01
 | Northwind Capital | Private Credit Fund I | **Under review** | Analyst A | Screened 2026-09-30 | Confirm hurdle |
 | Acme Partners | Real Estate Opportunity Fund II | **Triaged** | Analyst B | Extraction complete 2026-09-28 | Screen |
 | Bluefield Advisors | Infrastructure Income Fund | **Covered** | Analyst A | IC approved 2026-09-15 | Annual review |
+| Delta Ridge Partners | Evergreen Credit Fund | **Triaged** | Analyst B | Fact sheet received 2026-10-02 | Screen |
 """
 
 # field -> (file, page, quote, value). Quotes are verbatim from the pages above.
@@ -140,6 +151,15 @@ FACTS: dict[str, dict[str, tuple[str, int, str, str]]] = {
             "net IRR of 9.8% since inception, net of all fees and expenses",
             "9.8% net IRR",
         ),
+    },
+    "Delta Ridge Partners - Evergreen Credit Fund": {
+        "investor_standard": (
+            "Delta Ridge Evergreen - Fact Sheet.pdf",
+            1,
+            "Open to accredited investors.",
+            "accredited investors",
+        ),
+        "minimum_investment": ("Delta Ridge Evergreen - Fact Sheet.pdf", 1, "Minimum investment: $25,000.", "$25,000"),
     },
     "Acme Partners - Real Estate Opportunity Fund II": {
         "investor_standard": (
@@ -330,7 +350,7 @@ def main(workspace):
     for folder in folders:
         build_catalog(folder)
     # Bluefield stays unscreened, so the "Not screened" state is covered too.
-    for folder in folders[:2]:
+    for folder in [f for f in folders if not f.name.startswith("Bluefield")]:
         run(folder, "fixture", "fixture")
         time.sleep(1.1)  # runs are stamped to the second
     print(data_root)

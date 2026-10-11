@@ -1,4 +1,4 @@
-import { $, $$, cached, esc, n, ago, stampDate, gateStrip, clockChip, dispChip, dispShort, pipeChip, PIPE_ORDER, splitName, initials, empty, skeleton, downloadCSV, q } from '../lib.js';
+import { $, $$, cached, esc, n, ago, stampDate, gateStrip, clockChip, decisionChip, dispChip, dispShort, pipeChip, PIPE_ORDER, splitName, initials, empty, skeleton, downloadCSV, q } from '../lib.js';
 import { setCrumbs, screenDialog, jobs, onJobs } from '../app.js';
 
 /** @type {[string, string, (f: any) => any][]} */
@@ -9,6 +9,7 @@ const FILTERS = [
   ['review', 'Analyst review', f => f.latest?.flags?.any_review],
   ['fail', 'Gate not met', f => f.latest?.flags?.any_fail],
   ['late', 'Late', f => f.clock?.late],
+  ['draft', 'Draft disposition', f => f.latest && !['confirmed', 'signed_off'].includes(f.latest.decision?.state)],
 ];
 // The intake owner wins over PIPELINE.md's, which may lag behind.
 const owner = f => f.intake?.owner || f.pipeline?.Owner;
@@ -66,7 +67,7 @@ export async function render(el, r) {
         <td class="${owner(f) === 'unassigned' ? 'dim' : ''}">${esc(owner(f) || '–')}</td>
         <td class="dim tnum" style="white-space:nowrap">${mat && /^\d{4}/.test(mat) ? `${esc(mat)}<div class="sub">${ago(new Date(mat))}</div>` : '–'}</td>
         <td>${running ? '<span class="chip accent"><span class="pulse"></span>&nbsp;Running</span>' : gateStrip(f.latest?.gates)}</td>
-        <td>${f.latest ? dispChip(f.latest.disposition) : '<span class="dim">–</span>'}</td>
+        <td>${f.latest ? `${dispChip(f.latest.disposition)}<div style="margin-top:4px">${decisionChip(f.latest.decision)}</div>` : '<span class="dim">–</span>'}</td>
         <td>${clockChip(f.clock) || '<span class="dim">Not filed</span>'}</td>
         <td class="n dim tnum">${f.latest ? ago(stampDate(f.latest.run)) : '–'}<div class="sub">${f.runs.length ? f.runs.length + ' run' + (f.runs.length > 1 ? 's' : '') : ''}</div></td>
         <td class="n tnum">${f.catalog ? n(f.catalog.pages) : '<span class="dim">–</span>'}</td>

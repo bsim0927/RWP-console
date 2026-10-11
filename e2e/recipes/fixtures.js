@@ -26,6 +26,7 @@ export const FUNDS = {
   northwind: { id: 'Northwind_Capital_-_Private_Credit_Fund_I', manager: 'Northwind Capital' },
   acme: { id: 'Acme_Partners_-_Real_Estate_Opportunity_Fund_II', manager: 'Acme Partners' },
   bluefield: { id: 'Bluefield_Advisors_-_Infrastructure_Income_Fund', manager: 'Bluefield Advisors' },
+  delta: { id: 'Delta_Ridge_Partners_-_Evergreen_Credit_Fund', manager: 'Delta Ridge Partners' },
 };
 
 export const test = base.extend({
