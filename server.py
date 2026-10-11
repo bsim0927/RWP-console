@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sg import clock, disposition, gate_store, monitor, note, policy_store, review, store  # noqa: E402
+from sg import clock, disposition, gate_store, monitor, note, pipeline_md, policy_store, review, store  # noqa: E402
 from sg.catalog import build as build_catalog  # noqa: E402
 from sg.pipeline import ROOT, Tracker, load_gates, run  # noqa: E402
 
@@ -118,35 +118,76 @@ def merged_listing(v):
     return sorted(entries.values(), key=lambda e: (not e["dir"], e["name"].lower()))
 
 
-# ---------- pipeline (tables in PIPELINE.md, read-only) ----------
+# ---------- pipeline (tables in PIPELINE.md) ----------
+# The console reads every row and writes a fund's screen results into its own row (decision G3), never its Status.
+# RWP_PIPELINE_WRITE=0 turns the writing off.
+
+PIPELINE_WRITE = os.environ.get("RWP_PIPELINE_WRITE", "1") != "0"
+STATE_WORDS = {
+    "draft": "draft",
+    "confirmed": "confirmed",
+    "awaiting_signoff": "awaiting CIO sign-off",
+    "signed_off": "signed off",
+}
+
+
+def pipeline_file():
+    return next(iter(sorted(DATA_ROOT.rglob("PIPELINE.md"))), None)
 
 
 def parse_pipeline():
-    src = next(iter(sorted(DATA_ROOT.rglob("PIPELINE.md"))), None)
+    src = pipeline_file()
     if not src:
         return {"source": None, "updated": None, "sections": []}
-    text = src.read_text(errors="replace")
-    sections: list[dict] = []
-    cur: dict | None = None
-    header: list[str] | None = None
-    for line in text.splitlines():
-        if line.startswith("## "):
-            cur, header = {"title": line[3:].strip(), "rows": []}, None
-            sections.append(cur)
-        elif line.startswith("|") and cur is not None:
-            cells = [c.strip().replace("**", "") for c in line.strip().strip("|").split("|")]
-            if header is None:
-                header = cells
-            elif not all(set(c) <= set("-: ") for c in cells):
-                cur["rows"].append(dict(zip(header, cells, strict=False)))
-        else:
-            header = None
-    upd = re.search(r"Last updated:\s*(\S+)", text)
-    return {
-        "source": str(src.relative_to(DATA_ROOT)),
-        "updated": upd and upd.group(1),
-        "sections": [s for s in sections if s["rows"]],
+    return {"source": str(src.relative_to(DATA_ROOT)), **pipeline_md.parse(src.read_text(errors="replace"))}
+
+
+match_pipeline = pipeline_md.match
+
+
+def pipeline_values(fid):
+    """The cells the tool owns in a fund's row. Next action always says who acts next, so it never goes stale."""
+    intake = store.intake(fid)
+    values = {
+        "Owner": intake["owner"],
+        "Referred by": intake["referred_by"],
+        "Sponsor deadline": intake["sponsor_deadline"],
     }
+    clk = screen_clock(intake, disposition.decided_on_by_fund().get(fid, []))
+    if clk:
+        values["Screen due"] = clk["due"]
+    latest = disposition.latest_by_fund().get(fid)
+    if latest:
+        d, r = latest["decision"], latest["run"]
+        values["Last action"] = (
+            f"Screened {r[:4]}-{r[4:6]}-{r[6:8]}: {d['disposition'].split(' (')[0]} ({STATE_WORDS[d['state']]})"
+        )
+        if d["blockers"]:
+            values["Next action"] = "Analyst to " + "; ".join(d["blockers"])
+        elif d["state"] == "awaiting_signoff":
+            values["Next action"] = "CIO sign-off"
+        elif d["state"] == "draft":
+            values["Next action"] = "Confirm the disposition"
+        elif d["disposition"].startswith("Under review"):
+            values["Next action"] = "Manager to provide the requested documents"
+        else:
+            values["Next action"] = "CIO to update the status"
+    return values
+
+
+def sync_pipeline(fid):
+    """Write the fund's results into its PIPELINE.md row. A failure is logged, never raised: the database
+    already holds the result."""
+    folder, src = discover().get(fid), pipeline_file()
+    if not PIPELINE_WRITE or not folder or not src:
+        return
+    try:
+        written = pipeline_md.write(src, folder.name, pipeline_values(fid), date.today().isoformat())
+    except Exception as e:
+        log("pipeline", f"could not update PIPELINE.md for {folder.name}: {type(e).__name__}: {e}", "error")
+        return
+    if written:
+        log("pipeline", f"PIPELINE.md row for {folder.name}: {', '.join(written)}")
 
 
 def screen_clock(intake, decided_on):
@@ -182,20 +223,6 @@ def with_review(summary, latest):
     d = latest["decision"]
     decision = {k: d[k] for k in ("state", "needs_signoff", "confirmed", "signed_off", "blockers")}
     return {**summary, "gates": gates, "flags": d["flags"], "disposition": d["disposition"], "decision": decision}
-
-
-def match_pipeline(name, rows):
-    """Folder 'Manager - Strategy' -> the pipeline row for that manager with the most strategy words in common."""
-    mgr, _, strat = name.partition(" - ")
-    words = lambda s: set(re.findall(r"[a-z0-9]+", s.lower()))
-    best, score = None, -1
-    for r in rows:
-        m = words(r.get("Manager", ""))
-        if m and m <= words(mgr) | words(name):
-            s = len(words(strat) & words(r.get("Strategy", "")))
-            if s > score:
-                best, score = r, s
-    return best
 
 
 # ---------- full-text search over indexed pages (lazy, mtime-cached) ----------
@@ -594,6 +621,7 @@ class H(BaseHTTPRequestHandler):
         except ValueError as e:
             return self.send({"error": str(e)}, code=400) or True
         log("intake", f"saved intake for {parts[2]}: {json.dumps(out)[:200]}")
+        sync_pipeline(parts[2])
         self.send(out)
         return True
 
@@ -630,6 +658,8 @@ class H(BaseHTTPRequestHandler):
         except review.ReviewError as e:
             return self.send({"error": str(e)}, code=400) or True
         log("review", f"POST {path[5:]}: {json.dumps(b)[:200]}")
+        if path in ("/api/review", "/api/check", "/api/disposition"):
+            sync_pipeline(b.get("fund"))
         self.send(out)
         return True
 
@@ -682,6 +712,7 @@ class H(BaseHTTPRequestHandler):
             try:
                 _, summary, _ = run(folder, ex, jd, tracker=tr)
                 job.update(status="done", run=summary["run"], seconds=summary.get("seconds"))
+                sync_pipeline(body["fund"])
                 log("job", f"screen finished: {folder.name}: {summary['disposition']}", job=jid, run=summary["run"])
             except (SystemExit, Exception) as e:  # missing key, API errors
                 job.update(status="error", error=str(e) or type(e).__name__, seconds=round(time.time() - tr.t0, 1))
