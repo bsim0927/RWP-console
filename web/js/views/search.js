@@ -25,10 +25,11 @@ export async function searchPanel(box, { q: initial = '', fund = '', page = fals
     const words = term.split(/\s+/).filter(w => w.length > 1).map(w => w.replace(/[^\w]/g, '')).filter(Boolean);
     const hl = s => words.length ? esc(s).replace(new RegExp(`(${words.join('|')})`, 'gi'), '<mark>$1</mark>') : esc(s);
     const rooms = new Set(hits.map(h => h.room));
-    res.innerHTML = hits.length ? `<div class="card"><div class="hd"><h2 class="sec">${hits.length}${hits.length === 80 ? '+' : ''} pages</h2><span class="sec-sub">in ${rooms.size} data room${rooms.size > 1 ? 's' : ''}, ranked by term count</span></div><div class="bd flush">
-      ${hits.map((h, i) => `<div class="hit-card" data-i="${i}"><div class="f"><sl-icon name="file-earmark-pdf" style="color:#e66767"></sl-icon><b style="font-weight:550">${esc(h.file.split('/').pop())}</b><span class="chip ghost">p.${h.page}</span><span class="sp"></span>${!fund ? `<span class="dim" style="font-size:12px">${esc(h.room)}</span>` : ''}</div>
+    const named = hits.filter(h => h.by_name).length;
+    res.innerHTML = hits.length ? `<div class="card"><div class="hd"><h2 class="sec">${named ? `${named} file${named > 1 ? 's' : ''} by name · ` : ''}${hits.length - named}${hits.length === 80 ? '+' : ''} pages</h2><span class="sec-sub">in ${rooms.size} data room${rooms.size > 1 ? 's' : ''}, ranked by term count</span></div><div class="bd flush">
+      ${hits.map((h, i) => `<div class="hit-card" data-i="${i}"><div class="f"><sl-icon name="file-earmark-pdf" style="color:#e66767"></sl-icon><b style="font-weight:550">${esc(h.file.split('/').pop())}</b>${h.by_name ? `<span class="chip ghost">file name</span><span class="dim mono" style="font-size:11px">${hl(h.file)}</span>` : `<span class="chip ghost">p.${h.page}</span>`}<span class="sp"></span>${!fund ? `<span class="dim" style="font-size:12px">${esc(h.room)}</span>` : ''}</div>
         <div class="s">…${hl(h.snippet)}…</div></div>`).join('')}</div></div>` : `<div class="card">${empty('search', 'No pages match', 'Try fewer words.')}</div>`;
-    res.querySelectorAll('.hit-card').forEach(c => c.addEventListener('click', () => { const h = hits[+c.dataset.i]; openPreview(h.path, { page: h.page, quote: term }); }));
+    res.querySelectorAll('.hit-card').forEach(c => c.addEventListener('click', () => { const h = hits[+c.dataset.i]; openPreview(h.path, h.by_name ? { page: h.page } : { page: h.page, quote: term }); }));
   };
   $('#sgo', box).addEventListener('click', run);
   $('#sq', box).addEventListener('keydown', e => { if (e.key === 'Enter') run(); });

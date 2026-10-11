@@ -181,9 +181,28 @@ def search(q, rooms, limit=80):
     terms = [t for t in re.findall(r"\w+", q.lower()) if len(t) > 1]
     if not terms:
         return []
-    out = []
+    named, out = [], []
     for fid, folder in rooms.items():
-        for p in room_pages(folder):
+        pages = room_pages(folder)
+        # Evidence cites a file by name or path, words that rarely appear on its pages, so match those too.
+        firsts: dict[str, dict] = {}
+        for p in pages:
+            firsts.setdefault(p["file"], p)
+        for rel, p in firsts.items():
+            if all(term in rel.lower() for term in terms):
+                named.append(
+                    {
+                        "fund": fid,
+                        "room": folder.name,
+                        "file": rel,
+                        "page": p["page"],
+                        "path": str((folder / rel).relative_to(DATA_ROOT)),
+                        "snippet": re.sub(r"\s+", " ", p["text"][:320]).strip(),
+                        "score": 0,
+                        "by_name": True,
+                    }
+                )
+        for p in pages:
             t = p["text"].lower()
             if all(term in t for term in terms):
                 i = t.find(terms[0])
@@ -200,7 +219,7 @@ def search(q, rooms, limit=80):
                     }
                 )
     out.sort(key=lambda r: -r["score"])
-    return out[:limit]
+    return (named + out)[:limit]
 
 
 # ---------- analytics over every logged run ----------
