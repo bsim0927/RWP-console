@@ -317,10 +317,16 @@ def main(workspace):
     os.environ["DATABASE_URL"] = url = fresh_database()
 
     sys.path.insert(0, str(REPO))
+    from sg import store
     from sg.catalog import build as build_catalog
     from sg.pipeline import run
 
     install_stubs()
+    # Northwind was filed long before its screen, so the clock shows a late screen.
+    store.save_intake(
+        "Northwind_Capital_-_Private_Credit_Fund_I",
+        {"referred_by": "Adviser network", "owner": "Analyst A", "filed_on": "2026-09-01", "share_class": "Class I"},
+    )
     for folder in folders:
         build_catalog(folder)
     # Bluefield stays unscreened, so the "Not screened" state is covered too.

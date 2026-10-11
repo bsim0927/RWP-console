@@ -67,3 +67,21 @@ def test_a_screen_run_is_saved_with_its_gate_definitions_policy_and_calls(room, 
     # One stub extractor call per automated gate, linked from the gate records.
     linked = {c["id"] for g in saved["gates"] for c in g.get("calls") or []}
     assert linked and linked <= {c["id"] for c in store.calls()}
+
+
+@pytest.mark.usefixtures("stubs")
+def test_the_chosen_share_class_reaches_the_fee_gate_and_the_run_record(room, monkeypatch):
+    seen = {}
+    stub = extractors.EXTRACTORS["stub"]
+
+    def spy(gate, room, pages):
+        seen[gate["id"]] = gate["extractor"].get("rules", "")
+        return stub(gate, room, pages)
+
+    monkeypatch.setitem(extractors.EXTRACTORS, "stub", spy)
+    store.save_intake("Acme_Partners_-_Fund_I", {"share_class": "Class I"})
+    _, summary, _ = pipeline.run(room, "stub", "stub")
+    assert seen["total_annual_cost"].endswith("The analyst chose share class Class I: screen that class.")
+    assert "Class I" not in seen["operability"]
+    assert summary["share_class"] == "Class I"
+    assert "Share class screened: Class I." in store.run("Acme_Partners_-_Fund_I", summary["run"])["markdown"]

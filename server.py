@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -17,7 +18,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sg import gate_store, monitor, policy_store, store  # noqa: E402
+from sg import clock, gate_store, monitor, policy_store, store  # noqa: E402
 from sg.catalog import build as build_catalog  # noqa: E402
 from sg.pipeline import ROOT, Tracker, load_gates, run  # noqa: E402
 
@@ -146,6 +147,16 @@ def parse_pipeline():
         "updated": upd and upd.group(1),
         "sections": [s for s in sections if s["rows"]],
     }
+
+
+def screen_clock(intake, stamps):
+    """The fund against its five-business-day clock. The screen is done once a run follows the filing."""
+    filed = intake.get("filed_on")
+    if not filed:
+        return None
+    runs = sorted(f"{s[:4]}-{s[4:6]}-{s[6:8]}" for s in stamps)
+    done = next((d for d in runs if d >= filed), None)
+    return clock.status(filed, done, date.today())
 
 
 def match_pipeline(name, rows):
@@ -322,9 +333,11 @@ class H(BaseHTTPRequestHandler):
             pipe = [r for s in parse_pipeline()["sections"] for r in s["rows"]]
             out = []
             stamps, latest, catalogs = store.stamps_by_fund(), store.latest_summaries(), store.catalog_summaries()
+            intakes = store.intakes()
             for fid, folder in sorted(rooms.items()):
                 rs = stamps.get(fid, [])
                 rel = folder.relative_to(DATA_ROOT)
+                intake = intakes.get(fid) or dict.fromkeys(store.INTAKE_FIELDS)
                 out.append(
                     {
                         "id": fid,
@@ -336,6 +349,8 @@ class H(BaseHTTPRequestHandler):
                         "latest": latest.get(fid),
                         "catalog": catalogs.get(fid),
                         "pipeline": match_pipeline(folder.name, pipe),
+                        "intake": intake,
+                        "clock": screen_clock(intake, rs),
                     }
                 )
             return self.send(out)
@@ -532,8 +547,22 @@ class H(BaseHTTPRequestHandler):
         self.send(out)
         return True
 
+    def intake_write(self):
+        parts = [unquote(p) for p in urlparse(self.path).path.split("/") if p]
+        if parts[:2] != ["api", "intake"] or len(parts) != 3:
+            return False
+        if parts[2] not in discover():
+            return self.send({"error": "unknown fund"}, code=404) or True
+        try:
+            out = store.save_intake(parts[2], self.body())
+        except ValueError as e:
+            return self.send({"error": str(e)}, code=400) or True
+        log("intake", f"saved intake for {parts[2]}: {json.dumps(out)[:200]}")
+        self.send(out)
+        return True
+
     def do_PUT(self):
-        if not (self.policy_write("PUT") or self.gate_write("PUT")):
+        if not (self.policy_write("PUT") or self.gate_write("PUT") or self.intake_write()):
             self.send({"error": "not found"}, code=404)
 
     def do_DELETE(self):

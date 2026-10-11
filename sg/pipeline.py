@@ -94,7 +94,17 @@ class Tracker:
         e["detail"] = detail
 
 
-def run_gate(gate, room, extractor, judge, tr, catalog=None):
+def for_share_class(gate, share_class):
+    """A fee gate reads the analyst's chosen share class (decision B5); other gates are unchanged."""
+    ex = gate.get("extractor") or {}
+    if not share_class or not any(f.get("recurring") for f in ex.get("fields", [])):
+        return gate
+    rules = f"{ex.get('rules', '')} The analyst chose share class {share_class}: screen that class.".strip()
+    return {**gate, "extractor": {**ex, "rules": rules}}
+
+
+def run_gate(gate, room, extractor, judge, tr, catalog=None, share_class=None):
+    gate = for_share_class(gate, share_class)
     rec = {"gate": gate["id"], "gate_version": gate.get("version"), "extractor": extractor, "judge": judge}
     if gate.get("static_result"):
         e = tr.begin(gate["id"], "skipped")
@@ -200,8 +210,10 @@ def run(data_room, extractor, judge, only=None, tracker=None):
     e = tr.begin("catalog", "catalog")
     catalog = load_catalog(data_room)
     tr.end(e, f"{sum(d['canonical'] for d in catalog)} canonical documents")
+    fund_id = re.sub(r"[^\w.-]+", "_", room.name)
+    share_class = store.intake(fund_id)["share_class"]
     with ThreadPoolExecutor(max_workers=len(gates)) as pool:
-        results = list(pool.map(lambda g: run_gate(g, room, extractor, judge, tr, catalog), gates))
+        results = list(pool.map(lambda g: run_gate(g, room, extractor, judge, tr, catalog, share_class), gates))
     for r in results:
         r["timeline"] = [e for e in tr.steps if e["gate"] == r["gate"]]
     disposition, flags = reduce_gates(policy, results)
@@ -211,6 +223,7 @@ def run(data_room, extractor, judge, only=None, tracker=None):
         "run": stamp,
         "extractor": extractor,
         "judge": judge,
+        "share_class": share_class,
         "disposition": disposition,
         "flags": flags,
         "seconds": round(time.time() - tr.t0, 2),
@@ -224,7 +237,6 @@ def run(data_room, extractor, judge, only=None, tracker=None):
             for r in results
         },
     }
-    fund_id = re.sub(r"[^\w.-]+", "_", room.name)
     store.save_run(fund_id, summary, results, render_md(summary, results), gate_yaml, pol["id"])
     return f"{fund_id}/{stamp}", summary, results
 
@@ -233,7 +245,8 @@ def render_md(summary, results):
     L = [
         f"# Screen run: {summary['fund']}",
         "",
-        f"Run {summary['run']}. Extractor `{summary['extractor']}`, judge `{summary['judge']}`.",
+        f"Run {summary['run']}. Extractor `{summary['extractor']}`, judge `{summary['judge']}`."
+        + (f" Share class screened: {summary['share_class']}." if summary.get("share_class") else ""),
         "",
         f"**{summary['disposition']}**",
         "",
