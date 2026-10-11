@@ -4,6 +4,7 @@ import {
 } from '../lib.js';
 import { setCrumbs, screenDialog, jobs, onJobs } from '../app.js';
 import { browser } from './files.js';
+import { reviewPanel, reviewNote } from '../review.js';
 import { searchPanel } from './search.js';
 
 const TABS = [['screen', 'Screen', 'funnel'], ['catalog', 'Catalog', 'journal-text'], ['files', 'Files', 'folder2-open'], ['search', 'Search', 'search'], ['history', 'History', 'clock-history'], ['report', 'Report', 'file-earmark-text']];
@@ -93,8 +94,9 @@ export async function render(el, r) {
         <div class="r"><div class="m"><b>${facts}</b><span>facts verified</span></div><div class="m"><b>${rej}</b><span>quotes off page</span></div>
           <div class="m"><b>${tok ? n(tok) : '–'}</b><span>judge tokens</span></div><div class="m"><b>${sm.seconds != null ? sm.seconds + 's' : '–'}</b><span>duration</span></div></div></div>
       <div class="flow">${gates.map((g, i) => {
-        const t = resultTone(g.result), c = g.min_confidence;
-        return `<button class="gcard ${t}" data-g="${esc(g.gate)}"><div class="n">Gate ${GATE_ORDER.indexOf(g.gate) + 1 || i + 1}</div><div class="t">${esc(gateName(g.gate))}</div>${resultChip(g.result, g.review)}${g.flags?.length ? `<div class="flags">${flagChips(g.flags)}</div>` : ''}
+        const e = data.review?.[g.gate], res = e ? e.result : g.result, c = g.min_confidence;
+        const t = resultTone(res), note = reviewNote(e);
+        return `<button class="gcard ${t}" data-g="${esc(g.gate)}"><div class="n">Gate ${GATE_ORDER.indexOf(g.gate) + 1 || i + 1}</div><div class="t">${esc(gateName(g.gate))}</div>${resultChip(res, e ? e.needs_review : g.review)}${g.flags?.length ? `<div class="flags">${flagChips(g.flags)}</div>` : ''}${note ? `<div class="rv-note">${esc(note)}</div>` : ''}
           ${c != null ? `<div class="conf"><span class="meter"><span style="width:${c * 100}%"></span><i style="left:75%"></i></span><span class="tnum">${pct(c)}</span></div>` : `<div class="conf">${esc(g.note || 'Not automated')}</div>`}
           ${g.brief ? `<div class="ev"><span>${g.brief.facts.length} facts</span><span>${g.brief.not_found.length} not found</span>${g.rejected?.length ? `<span>${g.rejected.length} off page</span>` : ''}</div>` : ''}</button>`;
       }).join('')}</div>
@@ -129,17 +131,24 @@ export async function render(el, r) {
     d.label = `${gateName(g.gate)}`;
     const room = data.room_path;
     const reopen = () => gateDrawer(g);
+    const eff = data.review?.[g.gate];
+    const review = () => reviewPanel($('#rv', d), {
+      fundId: id, run: runId, rec: g, eff,
+      onSaved: out => { data.review = out; screenTab($('#p-screen', el)); gateDrawer(g); },
+    });
     if (!g.brief) {
-      d.innerHTML = `${resultChip(g.result)}<p class="muted">${esc(g.note || 'This gate is not automated in the prototype.')}</p>`;
+      d.innerHTML = `${resultChip(eff ? eff.result : g.result)}<p class="muted">${esc(g.note || 'This gate is not automated in the prototype.')}</p><div id="rv"></div>`;
+      review();
       return d.show();
     }
     const b = g.brief;
     const cite = f => `<button class="cite" data-file="${esc(f.file)}" data-page="${f.page}" data-quote="${esc(f.quote)}"><sl-icon name="file-earmark-pdf"></sl-icon>${esc(f.file.split('/').pop())} · p.${f.page}</button>${f.match === 'reflowed' ? '<div class="dim" style="font-size:11px">matched across layout</div>' : ''}`;
     const answers = Object.entries(g.answers || {}).filter(([k]) => k !== '_meta');
     const meta = g.answers?._meta;
-    d.innerHTML = `<div class="bar">${resultChip(g.result, g.review)}<span class="sp"></span><span class="dim mono">gate v${esc(g.gate_version)} · brief ${esc(g.brief_sha || '')}</span></div>
+    d.innerHTML = `<div class="bar">${resultChip(eff ? eff.result : g.result, eff ? eff.needs_review : g.review)}<span class="sp"></span><span class="dim mono">gate v${esc(g.gate_version)} · brief ${esc(g.brief_sha || '')}</span></div>
       ${g.flags?.length ? `<div class="flags" style="margin-bottom:14px">${flagChips(g.flags)}</div>` : ''}
-      ${g.review ? `<sl-alert variant="warning" open style="margin-bottom:14px"><sl-icon slot="icon" name="person-check"></sl-icon>Low confidence on <b>${esc((g.low_confidence || []).join(', '))}</b>. An analyst confirms this gate.</sl-alert>` : ''}
+      <div id="rv"></div>
+      ${(eff ? eff.needs_review : g.review) ? `<sl-alert variant="warning" open style="margin-bottom:14px"><sl-icon slot="icon" name="person-check"></sl-icon>Low confidence on <b>${esc((g.low_confidence || []).join(', '))}</b>. An analyst confirms this gate.</sl-alert>` : ''}
       <div class="card"><div class="hd"><h2 class="sec">Judge answers</h2><span class="sec-sub">${esc(g.judge)}${meta ? ` · ${esc(meta.model)} · ${n(meta.usage?.input_tokens)} in / ${n(meta.usage?.output_tokens)} out` : ''}</span></div><div class="bd">
         ${(g.questions || []).map(qq => `<div style="margin-bottom:12px"><div style="margin-bottom:4px">${esc(qq.q)} <span class="dim mono">${esc(qq.id)} · ${esc(qq.type)}</span></div>
           ${Object.entries(g.answers?.[qq.id] || {}).map(([k, v]) => `<div class="prob"><span class="lab">${esc(k)}</span><span class="bar"><span style="width:${(v * 100).toFixed(0)}%"></span></span><span class="pct">${(v * 100).toFixed(0)}%</span></div>`).join('')}</div>`).join('') || (answers.length ? '' : '<span class="dim">No questions.</span>')}
@@ -156,6 +165,7 @@ export async function render(el, r) {
       ${g.routing?.length ? `<div class="card"><div class="hd"><h2 class="sec">What the extractor read</h2><span class="sec-sub">${g.pages_offered?.length || 0} pages offered</span></div><div class="bd flush"><table class="t compact">
         <tr><th>Document</th><th>Section</th><th>Pages</th><th>Why</th></tr>${g.routing.map(x => `<tr><td>${esc(x.doc)}<div class="sub">${esc(x.doc_type || '')}</div></td><td>${esc(x.section)}</td>
         <td class="mono">${x.pages?.length ? `p.${x.pages[0]}${x.pages[1] > x.pages[0] ? '–' + x.pages[1] : ''}` : ''}${x.truncated ? ' <span class="dim">(cut)</span>' : ''}</td><td class="dim">${esc(x.why)}</td></tr>`).join('')}</table></div></div>` : ''}`;
+    review();
     $$('.cite', d).forEach(c => c.addEventListener('click', () => openPreview(room + '/' + c.dataset.file, { page: +c.dataset.page, quote: c.dataset.quote, back: { label: gateName(g.gate), fn: reopen } })));
     d.show();
   }

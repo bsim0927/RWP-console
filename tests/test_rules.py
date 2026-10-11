@@ -77,11 +77,13 @@ class Derive(unittest.TestCase):
         )
 
     def test_affiliated_administrator_is_incomplete_with_a_flag(self):
-        # Decision C1; custody and pricing are always the analyst's line (C3).
+        # Decision C1; custody and pricing are the analyst's checks (C3).
         e = {"sufficient": 0.9, "has_valuation_policy": 0.9}
         result, flags = self.outcome("operability", **e, affiliated_admin=0.8)
         self.assertEqual(result, "Incomplete")
-        self.assertEqual(flags, ["Affiliated administrator", "Custody and pricing: analyst to check"])
+        self.assertEqual(flags, ["Affiliated administrator"])
+        checks = [k["id"] for k in self.gates["operability"]["checks"]]
+        self.assertEqual(checks, ["custody", "pricing"])
         self.assertEqual(self.outcome("operability", **e, affiliated_admin=0.1)[0], "Pass")
 
     def test_missing_valuation_policy_is_incomplete(self):
@@ -174,7 +176,9 @@ class ShippedGates(unittest.TestCase):
             if g.get("static_result"):
                 continue
             with self.subTest(gate=g["id"]):
-                self.assertEqual(set(g), {"id", "version", "extractor", "questions", "derive", "flags"})
+                required = {"id", "version", "extractor", "questions", "derive", "flags"}
+                self.assertLessEqual(required, set(g))
+                self.assertLessEqual(set(g), required | {"checks", "review_if"})
                 self.assertLessEqual({r["then"] for r in g["derive"]}, set(gate_store.RESULTS))
 
     def test_the_seeded_gates_are_kept_in_history(self):
@@ -208,6 +212,18 @@ class Validate(unittest.TestCase):
         self.assertEqual(err[0], "flag 1 needs its text")
         self.assertTrue(err[1].startswith("flag 2: unknown name nope"))
         self.assertEqual(self.errors(derive=[{"then": "Pass"}], flags=[{"if": "fees_disagree", "flag": "F"}]), [])
+
+    def test_manual_checks_need_unique_ids_and_questions(self):
+        ok = [{"id": "custody", "q": "Can it be custodied?"}]
+        self.assertEqual(self.errors(derive=[{"then": "Pass"}], checks=ok), [])
+        self.assertEqual(
+            self.errors(derive=[{"then": "Pass"}], checks=ok + ok),
+            ["every manual check needs a unique id in lowercase_with_underscores"],
+        )
+        self.assertEqual(
+            self.errors(derive=[{"then": "Pass"}], checks=[{"id": "x", "q": " "}]),
+            ["every manual check needs its question"],
+        )
 
 
 @pytest.mark.usefixtures("db")

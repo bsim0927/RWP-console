@@ -140,6 +140,14 @@ def validate(g, own_file=None):
             err.append(f"flag {i} needs its text")
         elif f.get("if") is not None:
             err += _condition_errors(f"flag {i}", f["if"], allowed)
+    checks = g.get("checks") or []
+    ids = [c.get("id") for c in checks if isinstance(c, dict)] if isinstance(checks, list) else []
+    if not isinstance(checks, list) or len(ids) != len(checks):
+        err.append("checks must be a list of {id, q}")
+    elif any(not i or not re.match(r"^[a-z][a-z0-9_]*$", str(i)) for i in ids) or len(set(ids)) != len(ids):
+        err.append("every manual check needs a unique id in lowercase_with_underscores")
+    elif any(not str(c.get("q", "")).strip() for c in checks):
+        err.append("every manual check needs its question")
     if rules and isinstance(rules[-1], dict) and rules[-1].get("if") is not None:
         warn.append("the last rule has a condition; a gate that matches nothing returns Incomplete")
     dec = (g.get("review_if") or {}).get("decisive")

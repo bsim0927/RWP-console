@@ -173,6 +173,7 @@ def run_gate(gate, room, extractor, judge, tr, catalog=None, share_class=None):
     rec.update(
         result=result,
         flags=flags,
+        checks=gate.get("checks") or [],
         review=bool(low),
         low_confidence=low,
         brief=brief,

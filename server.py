@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sg import clock, gate_store, monitor, policy_store, store  # noqa: E402
+from sg import clock, gate_store, monitor, policy_store, review, store  # noqa: E402
 from sg.catalog import build as build_catalog  # noqa: E402
 from sg.pipeline import ROOT, Tracker, load_gates, run  # noqa: E402
 
@@ -157,6 +157,33 @@ def screen_clock(intake, stamps):
     runs = sorted(f"{s[:4]}-{s[4:6]}-{s[6:8]}" for s in stamps)
     done = next((d for d in runs if d >= filed), None)
     return clock.status(filed, done, date.today())
+
+
+def with_review(summary, reviewed):
+    """A run summary with each gate's result after analyst review; the pipeline's stays as pipeline_result."""
+    if not summary or not reviewed:
+        return summary
+    gates = {}
+    for g, x in summary["gates"].items():
+        e = reviewed.get(g)
+        gates[g] = (
+            x
+            if e is None
+            else {
+                **x,
+                "result": e["result"],
+                "pipeline_result": e["pipeline_result"],
+                "reviewed": e["reviewed"],
+                "review": e["needs_review"],
+                "pending_checks": e["pending_checks"],
+            }
+        )
+    flags = {
+        "any_fail": any(x["result"] == "Fail" for x in gates.values()),
+        "any_incomplete": any(x["result"] in ("Incomplete", "Not yet run") for x in gates.values()),
+        "any_review": any(x.get("review") for x in gates.values()),
+    }
+    return {**summary, "gates": gates, "flags": flags}
 
 
 def match_pipeline(name, rows):
@@ -333,7 +360,7 @@ class H(BaseHTTPRequestHandler):
             pipe = [r for s in parse_pipeline()["sections"] for r in s["rows"]]
             out = []
             stamps, latest, catalogs = store.stamps_by_fund(), store.latest_summaries(), store.catalog_summaries()
-            intakes = store.intakes()
+            intakes, reviewed = store.intakes(), review.latest_by_fund()
             for fid, folder in sorted(rooms.items()):
                 rs = stamps.get(fid, [])
                 rel = folder.relative_to(DATA_ROOT)
@@ -346,7 +373,7 @@ class H(BaseHTTPRequestHandler):
                         "vpath": to_virtual(str(rel)),
                         "stage": next((p for p in rel.parts if re.match(r"\d-", p)), None),
                         "runs": rs,
-                        "latest": latest.get(fid),
+                        "latest": with_review(latest.get(fid), reviewed.get(fid)),
                         "catalog": catalogs.get(fid),
                         "pipeline": match_pipeline(folder.name, pipe),
                         "intake": intake,
@@ -379,6 +406,8 @@ class H(BaseHTTPRequestHandler):
                 for k, j in JOBS.items()
             ][::-1]
             return self.send(out)
+        if parts == ["api", "reviewers"]:
+            return self.send(review.reviewers())
         if parts == ["api", "policy", "history"]:
             return self.send(policy_store.history())
         if parts == ["api", "gates", "history"]:
@@ -459,7 +488,13 @@ class H(BaseHTTPRequestHandler):
             if found is None:
                 return self.send({"error": "not found"}, code=404)
             room = rooms.get(fid)
-            return self.send({**found, "room_path": str(room.relative_to(DATA_ROOT)) if room else None})
+            return self.send(
+                {
+                    **found,
+                    "review": review.for_run(fid, stamp),
+                    "room_path": str(room.relative_to(DATA_ROOT)) if room else None,
+                }
+            )
         if parts[:2] == ["api", "job"] and len(parts) == 3:
             j = JOBS.get(parts[2])
             if not j:
@@ -561,6 +596,31 @@ class H(BaseHTTPRequestHandler):
         self.send(out)
         return True
 
+    def review_write(self):
+        """Reviewers, gate reviews and manual-check answers. Each answer is a new row, never an edit."""
+        path = urlparse(self.path).path
+        if path not in ("/api/reviewers", "/api/review", "/api/check"):
+            return False
+        b = self.body()
+        try:
+            if path == "/api/reviewers":
+                out = review.save_reviewer(b)
+            elif path == "/api/review":
+                out = review.add_review(
+                    b.get("fund"), b.get("run"), b.get("gate"), b.get("reviewer"), b.get("verdict"),
+                    b.get("reason"), b.get("result"), b.get("document"), b.get("page"),
+                )  # fmt: skip
+            else:
+                out = review.add_check(
+                    b.get("fund"), b.get("run"), b.get("gate"), b.get("check"), b.get("ok"), b.get("reviewer"),
+                    b.get("note"),
+                )  # fmt: skip
+        except review.ReviewError as e:
+            return self.send({"error": str(e)}, code=400) or True
+        log("review", f"POST {path[5:]}: {json.dumps(b)[:200]}")
+        self.send(out)
+        return True
+
     def do_PUT(self):
         if not (self.policy_write("PUT") or self.gate_write("PUT") or self.intake_write()):
             self.send({"error": "not found"}, code=404)
@@ -570,7 +630,7 @@ class H(BaseHTTPRequestHandler):
             self.send({"error": "not found"}, code=404)
 
     def do_POST(self):
-        if self.policy_write("POST") or self.gate_write("POST"):
+        if self.policy_write("POST") or self.gate_write("POST") or self.review_write():
             return
         parts = [p for p in urlparse(self.path).path.split("/") if p]
         if parts[:2] == ["api", "catalog"] and len(parts) == 4 and parts[3] == "rebuild":
