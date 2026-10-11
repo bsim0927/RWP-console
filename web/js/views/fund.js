@@ -1,10 +1,10 @@
 import {
-  $, $$, api, cached, bust, esc, n, pct, ago, fmtDT, stampDate, gateName, sortGates, resultChip, flagChips, clockChip, day, fmtDate, resultTone, resultIcon, dispChip, dispTone, dispIcon, dispShort, dispNote,
+  $, $$, api, cached, bust, esc, n, pct, ago, fmtDT, stampDate, gateName, sortGates, resultChip, flagChips, clockChip, decisionChip, day, fmtDate, resultTone, resultIcon, dispChip, dispTone, dispIcon, dispShort, dispNote,
   pipeChip, splitName, initials, waterfall, stepMatrix, lineChart, legend, hbars, markdown, openPreview, empty, skeleton, TIERS, TIER_COL, gateColor, GATE_ORDER, toast,
 } from '../lib.js';
 import { setCrumbs, screenDialog, jobs, onJobs } from '../app.js';
 import { browser } from './files.js';
-import { reviewPanel, reviewNote } from '../review.js';
+import { reviewPanel, reviewNote, currentReviewer } from '../review.js';
 import { searchPanel } from './search.js';
 
 const TABS = [['screen', 'Screen', 'funnel'], ['catalog', 'Catalog', 'journal-text'], ['files', 'Files', 'folder2-open'], ['search', 'Search', 'search'], ['history', 'History', 'clock-history'], ['report', 'Report', 'file-earmark-text']];
@@ -82,17 +82,19 @@ export async function render(el, r) {
     const rej = gates.reduce((a, g) => a + (g.rejected?.length || 0), 0);
     const tok = gates.reduce((a, g) => a + (g.answers?._meta?.usage?.input_tokens || 0) + (g.answers?._meta?.usage?.output_tokens || 0), 0);
     const steps = gates.flatMap(g => g.timeline || []);
-    const tone = dispTone(sm?.disposition);
+    const dec = data?.decision, disp = dec?.disposition ?? sm?.disposition;
+    const tone = dispTone(disp);
     box.innerHTML = `
       <div id="live"></div>
       ${sm ? `<div class="bar">
         <sl-select id="runsel" size="small" value="${esc(runId)}" style="min-width:300px">${fund.runs.map(x => `<sl-option value="${x}">${fmtDT(stampDate(x))}${x === fund.runs[0] ? ' · latest' : ''}</sl-option>`).join('')}</sl-select>
         <span class="chip ghost mono">${esc(sm.extractor)} → ${esc(sm.judge)}</span><span class="sp"></span>
         <a class="ghost-btn sm" href="#/fund/${encodeURIComponent(id)}/report/${runId}"><sl-icon name="file-earmark-text"></sl-icon>Run report</a></div>
-      <div class="verdict ${tone}"><div class="ic"><sl-icon name="${dispIcon(sm.disposition)}"></sl-icon></div>
-        <div><div class="t">${esc(dispShort(sm.disposition))}</div><div class="s">${esc(dispNote(sm.disposition))} · run ${ago(stampDate(sm.run))}</div></div>
+      <div class="verdict ${tone}"><div class="ic"><sl-icon name="${dispIcon(disp)}"></sl-icon></div>
+        <div><div class="t">${esc(dispShort(disp))}</div><div class="s">${esc(dispNote(disp))} · run ${ago(stampDate(sm.run))}</div></div>
         <div class="r"><div class="m"><b>${facts}</b><span>facts verified</span></div><div class="m"><b>${rej}</b><span>quotes off page</span></div>
           <div class="m"><b>${tok ? n(tok) : '–'}</b><span>judge tokens</span></div><div class="m"><b>${sm.seconds != null ? sm.seconds + 's' : '–'}</b><span>duration</span></div></div></div>
+      ${dec ? decisionBar(dec) : ''}
       <div class="flow">${gates.map((g, i) => {
         const e = data.review?.[g.gate], res = e ? e.result : g.result, c = g.min_confidence;
         const t = resultTone(res), note = reviewNote(e);
@@ -106,6 +108,13 @@ export async function render(el, r) {
         <div class="bd" id="tl">${steps.length ? waterfall(steps, gates.map(g => g.gate)) : '<span class="dim">This run predates step timing.</span>'}</div></div>` : ''}`;
     $('#runsel', box)?.addEventListener('sl-change', e => { runId = e.target.value; setHash(); screenTab(box); });
     $$('.gcard', box).forEach(b => b.addEventListener('click', () => gateDrawer(gates.find(g => g.gate === b.dataset.g))));
+    $('#dc-go', box)?.addEventListener('click', async () => {
+      const me = await currentReviewer();
+      try {
+        data.decision = await api('disposition', { method: 'POST', body: JSON.stringify({ fund: id, run: runId, reviewer: me?.id, reason: $('#dc-reason', box).value }) });
+        bust('funds'); toast('Disposition confirmed', 'good'); screenTab(box);
+      } catch (e) { toast(esc(e.message), 'crit'); }
+    });
     $$('#tlseg button', box).forEach(b => b.addEventListener('click', () => {
       $$('#tlseg button', box).forEach(x => x.classList.toggle('on', x === b));
       $('#tl', box).innerHTML = b.dataset.v === 'w' ? waterfall(steps, gates.map(g => g.gate)) : stepMatrix(steps, gates.map(g => g.gate));
@@ -134,7 +143,8 @@ export async function render(el, r) {
     const eff = data.review?.[g.gate];
     const review = () => reviewPanel($('#rv', d), {
       fundId: id, run: runId, rec: g, eff,
-      onSaved: out => { data.review = out; screenTab($('#p-screen', el)); gateDrawer(g); },
+      // A review can change the disposition, so reload the run, not just the review.
+      onSaved: async () => { data = await api(`run/${encodeURIComponent(id)}/${runId}`); screenTab($('#p-screen', el)); gateDrawer(data.gates.find(x => x.gate === g.gate)); },
     });
     if (!g.brief) {
       d.innerHTML = `${resultChip(eff ? eff.result : g.result)}<p class="muted">${esc(g.note || 'This gate is not automated in the prototype.')}</p><div id="rv"></div>`;
@@ -303,4 +313,15 @@ function intakeDialog(fund, done) {
     catch (e) { toast(esc(e.message), 'crit'); }
   };
   customElements.whenDefined('sl-dialog').then(() => requestAnimationFrame(() => d.show()));
+}
+
+// The disposition's confirmation (decision F5): who confirmed it, what still blocks it, and the button.
+function decisionBar(d) {
+  const by = d.signed_off || d.confirmed;
+  const status = d.state === 'draft' ? (d.blockers.length ? `Before confirming: ${d.blockers.join('; ')}.` : 'Every gate is reviewed; the disposition is ready to confirm.')
+    : d.state === 'awaiting_signoff' ? `Confirmed by ${d.confirmed.reviewer}; a not-covered disposition also needs the CIO's sign-off.`
+    : `${d.state === 'signed_off' ? 'Signed off' : 'Confirmed'} by ${by.reviewer}${by.reason ? ': ' + by.reason : ''}`;
+  const open = d.state === 'draft' || d.state === 'awaiting_signoff';
+  return `<div class="card" id="decision"><div class="bd rv-row" style="margin:0">${decisionChip(d)}<span style="flex:1;min-width:200px">${esc(status)}</span>
+    ${open ? `<input class="fi" id="dc-reason" aria-label="Reason" placeholder="Reason (optional)" style="max-width:260px"><button class="glow-btn sm" id="dc-go" ${d.blockers.length ? 'disabled' : ''}><sl-icon name="patch-check"></sl-icon>${d.state === 'awaiting_signoff' ? 'Sign off' : 'Confirm disposition'}</button>` : ''}</div></div>`;
 }

@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sg import clock, gate_store, monitor, policy_store, review, store  # noqa: E402
+from sg import clock, disposition, gate_store, monitor, policy_store, review, store  # noqa: E402
 from sg.catalog import build as build_catalog  # noqa: E402
 from sg.pipeline import ROOT, Tracker, load_gates, run  # noqa: E402
 
@@ -149,23 +149,24 @@ def parse_pipeline():
     }
 
 
-def screen_clock(intake, stamps):
-    """The fund against its five-business-day clock. The screen is done once a run follows the filing."""
+def screen_clock(intake, decided_on):
+    """The fund against its five-business-day clock. The screen is done once a disposition is confirmed
+    (or, for "not covered", signed off) on or after the filing date."""
     filed = intake.get("filed_on")
     if not filed:
         return None
-    runs = sorted(f"{s[:4]}-{s[4:6]}-{s[6:8]}" for s in stamps)
-    done = next((d for d in runs if d >= filed), None)
+    done = next((d for d in decided_on if d >= filed), None)
     return clock.status(filed, done, date.today())
 
 
-def with_review(summary, reviewed):
-    """A run summary with each gate's result after analyst review; the pipeline's stays as pipeline_result."""
-    if not summary or not reviewed:
+def with_review(summary, latest):
+    """A run summary after analyst review: each gate's reviewed result (the pipeline's stays as pipeline_result),
+    and the proposed disposition with its confirmation state."""
+    if not summary or not latest or latest["run"] != summary["run"]:
         return summary
     gates = {}
     for g, x in summary["gates"].items():
-        e = reviewed.get(g)
+        e = latest["gates"].get(g)
         gates[g] = (
             x
             if e is None
@@ -178,12 +179,9 @@ def with_review(summary, reviewed):
                 "pending_checks": e["pending_checks"],
             }
         )
-    flags = {
-        "any_fail": any(x["result"] == "Fail" for x in gates.values()),
-        "any_incomplete": any(x["result"] in ("Incomplete", "Not yet run") for x in gates.values()),
-        "any_review": any(x.get("review") for x in gates.values()),
-    }
-    return {**summary, "gates": gates, "flags": flags}
+    d = latest["decision"]
+    decision = {k: d[k] for k in ("state", "needs_signoff", "confirmed", "signed_off", "blockers")}
+    return {**summary, "gates": gates, "flags": d["flags"], "disposition": d["disposition"], "decision": decision}
 
 
 def match_pipeline(name, rows):
@@ -360,7 +358,7 @@ class H(BaseHTTPRequestHandler):
             pipe = [r for s in parse_pipeline()["sections"] for r in s["rows"]]
             out = []
             stamps, latest, catalogs = store.stamps_by_fund(), store.latest_summaries(), store.catalog_summaries()
-            intakes, reviewed = store.intakes(), review.latest_by_fund()
+            intakes, reviewed, decided = store.intakes(), disposition.latest_by_fund(), disposition.decided_on_by_fund()
             for fid, folder in sorted(rooms.items()):
                 rs = stamps.get(fid, [])
                 rel = folder.relative_to(DATA_ROOT)
@@ -377,7 +375,7 @@ class H(BaseHTTPRequestHandler):
                         "catalog": catalogs.get(fid),
                         "pipeline": match_pipeline(folder.name, pipe),
                         "intake": intake,
-                        "clock": screen_clock(intake, rs),
+                        "clock": screen_clock(intake, decided.get(fid, [])),
                     }
                 )
             return self.send(out)
@@ -492,6 +490,7 @@ class H(BaseHTTPRequestHandler):
                 {
                     **found,
                     "review": review.for_run(fid, stamp),
+                    "decision": disposition.for_run(fid, stamp),
                     "room_path": str(room.relative_to(DATA_ROOT)) if room else None,
                 }
             )
@@ -599,12 +598,14 @@ class H(BaseHTTPRequestHandler):
     def review_write(self):
         """Reviewers, gate reviews and manual-check answers. Each answer is a new row, never an edit."""
         path = urlparse(self.path).path
-        if path not in ("/api/reviewers", "/api/review", "/api/check"):
+        if path not in ("/api/reviewers", "/api/review", "/api/check", "/api/disposition"):
             return False
         b = self.body()
         try:
             if path == "/api/reviewers":
                 out = review.save_reviewer(b)
+            elif path == "/api/disposition":
+                out = disposition.confirm(b.get("fund"), b.get("run"), b.get("reviewer"), b.get("reason"))
             elif path == "/api/review":
                 out = review.add_review(
                     b.get("fund"), b.get("run"), b.get("gate"), b.get("reviewer"), b.get("verdict"),

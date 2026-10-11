@@ -58,7 +58,8 @@ test('intake shows who referred the fund and the screen clock', async ({ page })
   await expect(intake).toContainText('Class I');
   await expect(intake).toContainText('Sep 1, 2026');
   await expect(intake).toContainText('Sep 8, 2026'); // five business days after filing
-  await expect(page.locator('.fund-hd')).toContainText('Screened late');
+  // Nothing is confirmed yet, so the screen is still open and past due.
+  await expect(page.locator('.fund-hd')).toContainText('Late · due Sep 8, 2026');
 });
 
 test('the analyst edits intake and the fund picks it up', async ({ page }) => {
