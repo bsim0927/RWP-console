@@ -52,10 +52,12 @@ ROOMS: dict[str, dict] = {
                 "ACME REAL ESTATE OPPORTUNITY FUND II\nSummary of Terms\n"
                 "Investors: qualified purchasers only, under Section 3(c)(7).\n"
                 "Minimum commitment: $5,000,000.\nManagement fee: 2.0% of committed capital.\n"
-                "Carried interest: 20% over an 8% preferred return.\nFund expenses capped at 1.5% per annum.",
+                "Carried interest: 20% over an 8% preferred return.\nFund expenses capped at 1.5% per annum.\n"
+                "Target fund size: $250 million.",
             ],
             "Acme REOF II - Investor Deck.pdf": [
-                "Acme Partners\nInvestor Presentation\nGross returns on prior deals averaged 18%.",
+                "Acme Partners\nInvestor Presentation\nGross returns on prior deals averaged 18%.\n"
+                "Management fee of 1.75% on committed capital.\nTargeting a $400 million fund.",
             ],
         },
     },
@@ -94,8 +96,8 @@ Last updated: 2026-10-01
 | Delta Ridge Partners | Evergreen Credit Fund | **Triaged** | Analyst B | Fact sheet received 2026-10-02 | Screen |
 """
 
-# field -> (file, page, quote, value). Quotes are verbatim from the pages above.
-FACTS: dict[str, dict[str, tuple[str, int, str, str]]] = {
+# field -> (file, page, quote, value), or a list of them. Quotes are verbatim from the pages above.
+FACTS: dict[str, dict[str, tuple[str, int, str, str] | list[tuple[str, int, str, str]]]] = {
     "Northwind Capital - Private Credit Fund I": {
         "investor_standard": (
             "01 Offering/Northwind Private Credit Fund I - PPM.pdf",
@@ -170,7 +172,11 @@ FACTS: dict[str, dict[str, tuple[str, int, str, str]]] = {
         ),
         "minimum_investment": ("Acme REOF II - Term Sheet.pdf", 1, "Minimum commitment: $5,000,000.", "$5,000,000"),
         "exemption": ("Acme REOF II - Term Sheet.pdf", 1, "Section 3(c)(7)", "3(c)(7)"),
-        "management_fee": ("Acme REOF II - Term Sheet.pdf", 1, "Management fee: 2.0% of committed capital.", "2.0%"),
+        # The deck and the term sheet disagree on the fee, so the cost gate stays open (decisions B6, F3).
+        "management_fee": [
+            ("Acme REOF II - Term Sheet.pdf", 1, "Management fee: 2.0% of committed capital.", "2.0%"),
+            ("Acme REOF II - Investor Deck.pdf", 1, "Management fee of 1.75% on committed capital.", "1.75%"),
+        ],
         "fund_expenses": ("Acme REOF II - Term Sheet.pdf", 1, "Fund expenses capped at 1.5% per annum.", "1.5%"),
         "incentive_fee": (
             "Acme REOF II - Term Sheet.pdf",
@@ -186,6 +192,12 @@ FACTS: dict[str, dict[str, tuple[str, int, str, str]]] = {
         ),
     },
 }
+
+
+def sources(entry):
+    """A FACTS entry is one source or a list of them."""
+    return entry if isinstance(entry, list) else [entry]
+
 
 # A fabricated quote on every gate, so the "rejected, quote not on cited page" path is exercised.
 HALLUCINATED = "This sentence does not appear anywhere in the data room."
@@ -248,21 +260,16 @@ def write_rooms(data_root):
 
 
 def install_stubs():
-    from sg import extractors, judges, llm
+    from sg import consistency, extractors, judges, llm
 
     def extractor(gate, room, pages):
         t0 = time.time()
         table = FACTS.get(room.name, {})
         facts = [
-            {
-                "field": f["name"],
-                "value": table[f["name"]][3],
-                "file": table[f["name"]][0],
-                "page": table[f["name"]][1],
-                "quote": table[f["name"]][2],
-            }
+            {"field": f["name"], "value": value, "file": file, "page": page, "quote": quote}
             for f in gate["extractor"]["fields"]
             if f["name"] in table
+            for file, page, quote, value in sources(table[f["name"]])
         ]
         first = gate["extractor"]["fields"][0]["name"]
         facts.append(
@@ -283,6 +290,27 @@ def install_stubs():
             input_chars=sum(len(p["text"]) for p in pages),
         )
         return facts
+
+    def marketing(room, catalog):
+        """Acme's deck and term sheet disagree on the fund size."""
+        if not room.name.startswith("Acme"):
+            return []
+        return [
+            {
+                "topic": "Target fund size",
+                "summary": "The deck targets $400 million; the term sheet says $250 million.",
+                "marketing": {
+                    "file": "Acme REOF II - Investor Deck.pdf",
+                    "page": 1,
+                    "quote": "Targeting a $400 million fund.",
+                },
+                "filed": {
+                    "file": "Acme REOF II - Term Sheet.pdf",
+                    "page": 1,
+                    "quote": "Target fund size: $250 million.",
+                },
+            }
+        ]
 
     def judge(gate, brief, questions):
         t0 = time.time()
@@ -308,6 +336,7 @@ def install_stubs():
         return answers
 
     extractors.EXTRACTORS["fixture"] = extractor
+    consistency.MARKETING_CHECK["fixture"] = marketing
     judges.JUDGES["fixture"] = judge
 
 

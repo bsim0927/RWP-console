@@ -7,11 +7,15 @@ test('screen tab shows a card per gate with its result', async ({ page }) => {
   await open(page, fundUrl(FUNDS.acme), FUNDS.acme.manager);
   const cards = page.locator('#p-screen .gcard');
   await expect(cards).toHaveCount(5);
-  // A QP-only fund passes eligibility and carries the flag (decision A2); cost has no threshold (B1).
+  // A QP-only fund passes eligibility and carries the flag (decision A2).
   const eligibility = page.locator('#p-screen .gcard[data-g="investor_eligibility"]');
   await expect(eligibility).toContainText('Pass');
   await expect(eligibility).toContainText('QP-only');
-  await expect(page.locator('#p-screen .gcard[data-g="total_annual_cost"]')).toContainText('Pass');
+  // The deck and term sheet quote different fees, so cost stays open (B6) and the disagreement shows (F3).
+  const cost = page.locator('#p-screen .gcard[data-g="total_annual_cost"]');
+  await expect(cost).toContainText('Incomplete');
+  await expect(cost).toContainText('Fee rates disagree across documents');
+  await expect(cost).toContainText('1 disagree');
 });
 
 test('gate drawer shows verified facts and the rejected, fabricated quote', async ({ page }) => {
@@ -71,4 +75,20 @@ test('the analyst edits intake and the fund picks it up', async ({ page }) => {
   await dialog.locator('[data-go]').click();
   await expect(page.locator('#intake')).toContainText('Consultant B');
   await expect(page.locator('.fund-hd')).toContainText('Analyst C');
+});
+
+test('documents that disagree are findings, with both sources cited', async ({ page }) => {
+  await open(page, fundUrl(FUNDS.acme), FUNDS.acme.manager);
+  const marketing = page.locator('#p-screen #marketing');
+  await expect(marketing).toContainText('Target fund size');
+  await expect(marketing).toContainText('Targeting a $400 million fund.');
+  await expect(marketing).toContainText('Target fund size: $250 million.');
+
+  await page.locator('#p-screen .gcard[data-g="total_annual_cost"]').click();
+  const disagree = page.locator('#drawer #disagree');
+  await expect(disagree).toContainText('management_fee');
+  await expect(disagree).toContainText('Documents give 1.75%, 2%');
+  await expect(disagree).toContainText('Marketing vs filed');
+  await disagree.locator('.cite').last().click();
+  await expect(page.locator('#drawer .chip', { hasText: 'Page 1' })).toBeVisible();
 });
