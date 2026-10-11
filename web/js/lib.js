@@ -307,8 +307,6 @@ export function fileIcon(name, dir) {
   const ic = { pdf: 'file-earmark-pdf', md: 'file-earmark-text', xls: 'file-earmark-spreadsheet', doc: 'file-earmark-richtext', img: 'file-earmark-image' }[k] || 'file-earmark';
   return `<sl-icon class="ficon ${k || ''}" name="${ic}"></sl-icon>`;
 }
-// Real path under a Drive download part ("RWP-<stamp>-1-002/RWP/...") -> path in the merged RWP tree.
-export const mergedPath = p => p.replace(/^[^/]+-\d{8}T\d{6}Z-\d+-\d{3}\/[^/]+\//, '');
 export const rawUrl = (path, page) => `/api/raw?${q({ path })}${page ? '#page=' + page : ''}`;
 
 function highlight(text, quote) {
@@ -332,7 +330,7 @@ export async function openPreview(path, { page, quote, title, back } = {}) {
   const ext = extOf(name);
   d.classList.add('wide');
   d.label = title || name;
-  const dirPath = mergedPath(path).split('/').slice(0, -1).join('/');
+  const dirPath = path.split('/').slice(0, -1).join('/');
   const head = `<div class="bar" style="margin-bottom:14px">
     ${back ? `<button class="ghost-btn sm" data-back><sl-icon name="arrow-left"></sl-icon>${esc(back.label)}</button>` : ''}
     <span class="path dim mono" style="font-size:11.5px">${esc(dirPath)}</span><span class="sp"></span>

@@ -29,7 +29,7 @@ export async function render(el, r) {
       <div style="min-width:0"><div class="eyebrow">Data room</div><h1>${esc(s.manager)}</h1>
         <div class="meta"><span>${esc(s.strategy || '')}</span>${pipeChip(st.status)}${owner ? `<span class="chip ghost"><sl-icon name="person"></sl-icon>${esc(owner)}</span>` : ''}${clockChip(fund.clock)}
         ${fund.catalog ? `<span class="chip ghost"><sl-icon name="files"></sl-icon>${n(fund.catalog.files)} files · ${n(fund.catalog.pages)} pages</span>` : ''}</div></div>
-      <div class="act"><a class="ghost-btn" href="#/files?path=${encodeURIComponent(fund.vpath)}"><sl-icon name="folder2-open"></sl-icon>Open folder</a>
+      <div class="act"><a class="ghost-btn" href="#/files?path=${encodeURIComponent(fund.path)}"><sl-icon name="folder2-open"></sl-icon>Open folder</a>
         <button class="glow-btn" id="run"><sl-icon name="play-fill"></sl-icon>Run screen</button></div></div>
     <div class="card" style="margin-bottom:16px" id="intake"><div class="hd"><h2 class="sec">Intake</h2><span class="sec-sub">entered by the analyst when the fund is filed</span><span class="sp"></span>
       <button class="ghost-btn sm" id="intake-edit"><sl-icon name="pencil"></sl-icon>Edit intake</button></div><div class="facts3 rows">
@@ -55,7 +55,7 @@ export async function render(el, r) {
     const box = $('#p-' + k, el);
     if (k === 'screen') return screenTab(box);
     if (k === 'catalog') return catalogTab(box, fund);
-    if (k === 'files') return browser(box, { root: fund.vpath, path: fund.vpath, embedded: true });
+    if (k === 'files') return browser(box, { root: fund.path, path: fund.path, embedded: true });
     if (k === 'search') return searchPanel(box, { fund: fund.id });
     if (k === 'history') return historyTab(box);
     if (k === 'note') return noteTab(box);
