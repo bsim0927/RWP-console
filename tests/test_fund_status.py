@@ -99,3 +99,38 @@ def test_the_import_matches_rows_to_rooms_and_keeps_rows_without_one(tmp_path, m
     assert store.intake("Zeta_Partners_-_Credit_II")["owner"] == "Analyst B"
     importer.main()  # re-running adds nothing
     assert len(fund_status.history("Monroe_Capital_-_ABF")) == 1
+
+
+def test_two_funds_from_one_manager_never_share_a_folder():
+    table = [
+        {"Manager": "Blackstone", "Strategy": "BREIT"},
+        {"Manager": "Blackstone", "Strategy": "BCRED, Private Credit Fund, non-traded BDC"},
+        {"Manager": "Blackstone", "Strategy": "BXHF, multi-strategy hedge fund"},
+        {"Manager": "Apollo", "Strategy": "Fund XII"},
+        {"Manager": "Sachem Head", "Strategy": "Activist"},
+    ]
+    rooms = ["Blackstone - BREIT", "Blackstone - BXHF Multi-Strategy Hedge", "Apollo - Fund XI", "Sachem Head"]
+    assert importer.assign(table, rooms) == {
+        0: "Blackstone - BREIT",
+        2: "Blackstone - BXHF Multi-Strategy Hedge",
+        4: "Sachem Head",
+    }
+
+
+def test_acronyms_longer_manager_names_and_placeholder_folders_still_match():
+    table = [
+        {"Manager": "Monroe Capital", "Strategy": "Asset-Backed Finance, Series II"},
+        {"Manager": "HPS BlackRock", "Strategy": "HLEND Corporate Lending Fund"},
+        {"Manager": "METI", "Strategy": "unidentified"},
+    ]
+    rooms = [
+        "Monroe Capital - ABF",
+        "HPS - HLEND Corporate Lending",
+        "METI - TBD",
+        "BlackRock - CREDX Credit Strategies",
+    ]
+    assert importer.assign(table, rooms) == {
+        0: "Monroe Capital - ABF",
+        1: "HPS - HLEND Corporate Lending",
+        2: "METI - TBD",
+    }
