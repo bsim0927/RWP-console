@@ -9,6 +9,7 @@ export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;'
 // ---------- api ----------
 export async function api(path, opts) {
   const r = await fetch('/api/' + path, opts);
+  if (r.status === 401) { location.href = '/login'; throw new Error('sign in first'); } // the session ran out
   const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
   if (!r.ok || (body && body.error && !Array.isArray(body))) throw new Error(body.error || `HTTP ${r.status}`);
   return body;
