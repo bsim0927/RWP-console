@@ -20,6 +20,9 @@ export const onJobs = fn => (listeners.add(fn), () => listeners.delete(fn));
 
 export async function startScreen(fundId, extractor, judge) {
   const r = await api('screen', { method: 'POST', body: JSON.stringify({ fund: fundId, extractor, judge }) });
+  // The run request lasts the whole screen; nothing waits on it. Progress and the outcome come from polling
+  // the job, which the server writes as the screen runs.
+  api(`screen/${r.job}/run`, { method: 'POST' }).catch(() => { /* the job records any failure */ });
   jobs.set(fundId, { id: r.job, fundId, state: { status: 'running', steps: [], gates: [], elapsed: 0 } });
   toast(`Screen started for <b>${esc(splitName(fundId.replaceAll('_', ' ')).manager)}</b>`, 'accent', 'play-circle');
   pollJobs();

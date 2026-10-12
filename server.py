@@ -7,7 +7,6 @@ Deployed, Vercel imports `app` (WSGI) from this module and the data root comes f
 run the same handler. With SITE_PASSWORD set, every page and API call needs a session from /login.
 """
 
-import collections
 import hashlib
 import hmac
 import json
@@ -15,9 +14,7 @@ import mimetypes
 import os
 import re
 import sys
-import threading
 import time
-import uuid
 from datetime import date
 from email.message import Message
 from http import HTTPStatus
@@ -29,12 +26,10 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sg import clock, disposition, fund_status, gate_store, monitor, note, policy_store, review, store  # noqa: E402
+from sg import clock, disposition, fund_status, gate_store, jobs, monitor, note, policy_store, review, store  # noqa: E402
 from sg.catalog import build as build_catalog  # noqa: E402
 from sg.pipeline import ROOT, Tracker, load_gates, run  # noqa: E402
 
-JOBS: dict[str, dict] = {}
-LOG: collections.deque[dict] = collections.deque(maxlen=1000)  # in-memory event log, newest last
 WEB = ROOT / "web"
 
 # The command line sets it locally (see __main__); an importer such as Vercel's runtime has other arguments.
@@ -49,7 +44,12 @@ TEXT_EXT = (".md", ".csv", ".json", ".yaml", ".yml", ".txt", ".jsonl")
 
 
 def log(kind, msg, level="info", **extra):
-    LOG.append({"t": time.time(), "kind": kind, "level": level, "msg": msg, **extra})
+    """An event for the agent monitor. Logging never breaks a request: if the database is unreachable,
+    the event goes to stderr instead."""
+    try:
+        jobs.log(kind, msg, level, **extra)
+    except Exception as e:
+        print(f"[{level}] {kind}: {msg} (not logged: {type(e).__name__})", file=sys.stderr)
 
 
 # ---------- the shared password ----------
@@ -422,22 +422,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(fund_status.history(parts[2]))
         if parts == ["api", "agent"]:
             out = monitor.report()
-            out["jobs"] = [
-                {
-                    "id": k,
-                    "fund": j["fund"],
-                    "fund_id": j["fund_id"],
-                    "status": j["status"],
-                    "started": j["started"],
-                    "extractor": j["extractor"],
-                    "judge": j["judge"],
-                    "elapsed": round(time.time() - j["tr"].t0, 1) if j["status"] == "running" else j.get("seconds"),
-                    "run": j.get("run"),
-                    "error": j.get("error"),
-                    "steps": list(j["tr"].steps),
-                }
-                for k, j in JOBS.items()
-            ][::-1]
+            out["jobs"] = jobs.recent()
             return self.send(out)
         if parts == ["api", "reviewers"]:
             return self.send(review.reviewers())
@@ -458,29 +443,15 @@ class H(BaseHTTPRequestHandler):
                 }
             )
         if parts == ["api", "logs"]:
-            jobs = [
-                {
-                    "id": k,
-                    "fund": j["fund"],
-                    "fund_id": j["fund_id"],
-                    "status": j["status"],
-                    "started": j["started"],
-                    "extractor": j["extractor"],
-                    "judge": j["judge"],
-                    "elapsed": round(time.time() - j["tr"].t0, 1) if j["status"] == "running" else j.get("seconds"),
-                    "run": j.get("run"),
-                    "error": j.get("error"),
-                }
-                for k, j in JOBS.items()
-            ]
-            return self.send({"events": list(LOG), "jobs": jobs[::-1]})
+            recent = [{k: v for k, v in j.items() if k not in ("steps", "gates")} for j in jobs.recent()]
+            return self.send({"events": jobs.events(), "jobs": recent})
         if parts == ["api", "meta"]:
             return self.send(
                 {
                     "password": bool(session_key()),
                     "data_root": str(DATA_ROOT),
                     "rooms": len(rooms),
-                    "running": sum(j["status"] == "running" for j in JOBS.values()),
+                    "running": sum(j["status"] == "running" for j in jobs.recent(20)),
                 }
             )
         if parts == ["api", "search"]:
@@ -527,19 +498,8 @@ class H(BaseHTTPRequestHandler):
         if parts[:2] == ["api", "note"] and len(parts) == 4:
             return self.send(note.versions(parts[2], parts[3]))
         if parts[:2] == ["api", "job"] and len(parts) == 3:
-            j = JOBS.get(parts[2])
-            if not j:
-                return self.send({"error": "unknown job"}, code=404)
-            return self.send(
-                {
-                    "status": j["status"],
-                    "run": j.get("run"),
-                    "error": j.get("error"),
-                    "elapsed": round(time.time() - j["tr"].t0, 2),
-                    "gates": j["gates"],
-                    "steps": list(j["tr"].steps),
-                }
-            )
+            j = jobs.get(parts[2])
+            return self.send(j) if j else self.send({"error": "unknown job"}, code=404)
         if parts[:2] == ["api", "catalog"] and len(parts) == 3:
             folder = rooms.get(parts[2])
             if not folder:
@@ -699,39 +659,43 @@ class H(BaseHTTPRequestHandler):
                 return self.send({"error": f"{type(e).__name__}: {e}"}, code=500)
             log("catalog", f"rebuilt catalog for {folder.name}")
             return self.send({"ok": True})
-        if urlparse(self.path).path != "/api/screen":
-            return self.send({"error": "not found"}, code=404)
+        if parts == ["api", "screen"]:
+            return self.queue_screen()
+        if parts[:2] == ["api", "screen"] and len(parts) == 4 and parts[3] == "run":
+            return self.run_screen(parts[2])
+        return self.send({"error": "not found"}, code=404)
+
+    def queue_screen(self):
+        """Ask for a screen: a queued job the browser then runs with POST /api/screen/<job>/run."""
         body = self.body()
         folder = discover().get(body.get("fund"))
         if not folder:
             return self.send({"error": "unknown fund"}, code=404)
-        tr = Tracker()
         ex, jd = body.get("extractor", "claude"), body.get("judge", "jev")
-        job = {
-            "status": "running",
-            "tr": tr,
-            "gates": [g["id"] for g in load_gates()],
-            "fund": folder.name,
-            "fund_id": body["fund"],
-            "extractor": ex,
-            "judge": jd,
-            "started": time.time(),
-        }
-        jid = uuid.uuid4().hex[:10]
-        JOBS[jid] = job
-        log("job", f"screen started: {folder.name} (extractor {ex}, judge {jd})", job=jid)
-
-        def work():
-            try:
-                _, summary, _ = run(folder, ex, jd, tracker=tr)
-                job.update(status="done", run=summary["run"], seconds=summary.get("seconds"))
-                log("job", f"screen finished: {folder.name}: {summary['disposition']}", job=jid, run=summary["run"])
-            except (SystemExit, Exception) as e:  # missing key, API errors
-                job.update(status="error", error=str(e) or type(e).__name__, seconds=round(time.time() - tr.t0, 1))
-                log("job", f"screen failed: {folder.name}: {job['error']}", "error", job=jid)
-
-        threading.Thread(target=work, daemon=True).start()
+        jid = jobs.create(body["fund"], folder.name, ex, jd, [g["id"] for g in load_gates()])
+        log("job", f"screen queued: {folder.name} (extractor {ex}, judge {jd})", job=jid)
         self.send({"job": jid})
+
+    def run_screen(self, jid):
+        """Run a queued screen inside this request (no background thread: a serverless function stops when
+        its response is sent), writing each step to the job as it goes. The browser polls the job."""
+        job = jobs.claim(jid)
+        if not job:
+            return self.send({"error": "unknown job, or already started"}, code=409)
+        folder = discover().get(job["fund_id"])
+        tr = Tracker(on_change=lambda steps: jobs.progress(jid, steps))
+        try:
+            if not folder:
+                raise LookupError(f"no data room {job['fund_id']}")
+            _, summary, _ = run(folder, job["extractor"], job["judge"], tracker=tr)
+        except (SystemExit, Exception) as e:  # missing key, API errors
+            error = str(e) or type(e).__name__
+            jobs.finish(jid, tr.steps, error=error)
+            log("job", f"screen failed: {job['fund_id']}: {error}", "error", job=jid)
+            return self.send({"status": "error", "error": error})
+        jobs.finish(jid, tr.steps, run_stamp=summary["run"])
+        log("job", f"screen finished: {summary['fund']}: {summary['disposition']}", job=jid, run=summary["run"])
+        self.send({"status": "done", "run": summary["run"]})
 
     def log_message(self, *a):
         pass

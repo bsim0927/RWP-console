@@ -76,22 +76,32 @@ def raise_flags(flags, env):
 
 
 class Tracker:
-    """Thread-safe record of pipeline steps, shared by the live viewer and the run log."""
+    """Thread-safe record of pipeline steps, shared by the live viewer and the run log. on_change, if given,
+    receives a copy of the steps after every change (the console writes them to the job)."""
 
-    def __init__(self):
+    def __init__(self, on_change=None):
         self.t0 = time.time()
         self.steps = []
         self.lock = threading.Lock()
+        self.on_change = on_change
+
+    def _changed(self):
+        if self.on_change:
+            with self.lock:
+                snapshot = [dict(e) for e in self.steps]
+            self.on_change(snapshot)
 
     def begin(self, gate, step):
         e = {"gate": gate, "step": step, "start": round(time.time() - self.t0, 3), "end": None, "detail": ""}
         with self.lock:
             self.steps.append(e)
+        self._changed()
         return e
 
     def end(self, e, detail=""):
         e["end"] = round(time.time() - self.t0, 3)
         e["detail"] = detail
+        self._changed()
 
 
 def for_share_class(gate, share_class):
