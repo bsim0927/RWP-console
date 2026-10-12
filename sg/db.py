@@ -9,6 +9,7 @@ import os
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from urllib.parse import urlsplit
 
 import psycopg
 from psycopg.rows import DictRow, dict_row
@@ -33,9 +34,11 @@ def _pool_now() -> ConnectionPool[Conn]:
     global _pool
     with _lock:
         if _pool is None:
-            _pool = ConnectionPool(
-                url(), connection_class=Conn, min_size=1, max_size=8, kwargs={"row_factory": dict_row}, open=True
-            )
+            u = url()
+            kwargs: dict = {"row_factory": dict_row}
+            if urlsplit(u).port == 6543:  # Supabase's transaction pooler cannot hold prepared statements
+                kwargs["prepare_threshold"] = None
+            _pool = ConnectionPool(u, connection_class=Conn, min_size=1, max_size=8, kwargs=kwargs, open=True)
         return _pool
 
 
