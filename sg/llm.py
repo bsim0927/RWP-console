@@ -45,13 +45,18 @@ def record(provider, model, t0, *, usage=None, ok=True, error=None, output=None,
 load_env()
 
 
+# Output ceiling per call. A fee gate that quotes every layer wherever it appears can run past 4k tokens;
+# 16k is the documented ceiling for a non-streaming request. SG_CLAUDE_MAX_TOKENS overrides it.
+MAX_TOKENS = 16000
+
+
 def call_claude_tool(system, user, tool_name, schema):
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         raise SystemExit("ANTHROPIC_API_KEY is not set")
     body = {
         "model": os.environ.get("SG_CLAUDE_MODEL", "claude-sonnet-5-5"),
-        "max_tokens": 4096,
+        "max_tokens": int(os.environ.get("SG_CLAUDE_MAX_TOKENS", MAX_TOKENS)),
         "system": system + f" Respond only by calling the {tool_name} tool.",
         "messages": [{"role": "user", "content": user}],
         "tools": [{"name": tool_name, "description": "Return the result.", "input_schema": schema}],
@@ -64,7 +69,7 @@ def call_claude_tool(system, user, tool_name, schema):
     )
     t0, chars = time.time(), len(body["system"]) + len(user)
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310  fixed https URL
+        with urllib.request.urlopen(req, timeout=300) as r:  # noqa: S310  fixed https URL
             resp = json.load(r)
     except urllib.error.HTTPError as e:
         err = f"Anthropic API HTTP {e.code}: {e.read().decode()[:500]}"
@@ -73,11 +78,28 @@ def call_claude_tool(system, user, tool_name, schema):
     except (urllib.error.URLError, TimeoutError) as e:
         record("anthropic", body["model"], t0, ok=False, error=str(e), input_chars=chars)
         raise
+    model = resp.get("model", body["model"])
+    # A cut-off or declined response still arrives as HTTP 200, so check why the model stopped before
+    # reading its tool call: a truncated call is partial or empty, never a result.
+    stop = resp.get("stop_reason")
+    if stop in ("max_tokens", "refusal"):
+        why = (
+            f"response cut off at max_tokens ({body['max_tokens']}); raise SG_CLAUDE_MAX_TOKENS"
+            if stop == "max_tokens"
+            else f"model declined: {(resp.get('stop_details') or {}).get('category') or 'no category'}"
+        )
+        record("anthropic", model, t0, usage=resp.get("usage"), ok=False, error=why, input_chars=chars)
+        raise RuntimeError(f"{tool_name}: {why}")
     for block in resp["content"]:
         if block["type"] == "tool_use":
+            missing = [k for k in schema.get("required", []) if k not in block["input"]]
+            if missing:
+                why = f"tool call is missing {', '.join(missing)}"
+                record("anthropic", model, t0, usage=resp.get("usage"), ok=False, error=why, input_chars=chars)
+                raise RuntimeError(f"{tool_name}: {why}")
             record(
                 "anthropic",
-                resp.get("model", body["model"]),
+                model,
                 t0,
                 usage=resp.get("usage"),
                 output=block["input"],
@@ -86,7 +108,7 @@ def call_claude_tool(system, user, tool_name, schema):
             return block["input"]
     record(
         "anthropic",
-        resp.get("model", body["model"]),
+        model,
         t0,
         usage=resp.get("usage"),
         ok=False,
