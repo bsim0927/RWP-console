@@ -26,7 +26,19 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sg import clock, disposition, fund_status, gate_store, jobs, monitor, note, policy_store, review, store  # noqa: E402
+from sg import (  # noqa: E402
+    clock,
+    datasource,
+    disposition,
+    fund_status,
+    gate_store,
+    jobs,
+    monitor,
+    note,
+    policy_store,
+    review,
+    store,
+)
 from sg.catalog import build as build_catalog  # noqa: E402
 from sg.pipeline import ROOT, Tracker, load_gates, run  # noqa: E402
 
@@ -78,12 +90,24 @@ def valid_session(value, now=None):
     return hmac.compare_digest(sig, good) and int(exp) > (now or time.time())
 
 
+# ---------- the fund data ----------
+# A data root on disk, or the database and Storage when hosted (sg/datasource.py, chosen by RWP_DATA_SOURCE).
+# Folder names inside a fund are kept as they are and mean nothing to the console.
+
+_SOURCES: dict = {}
+
+
+def data():
+    """The data source, one per data root, so a local source keeps its page cache between requests."""
+    key = (os.environ.get("RWP_DATA_SOURCE", "local"), DATA_ROOT)
+    if key not in _SOURCES:
+        _SOURCES[key] = datasource.source(DATA_ROOT)
+    return _SOURCES[key]
+
+
 def discover():
-    rooms = {}
-    for idx in DATA_ROOT.rglob("_index/pages.jsonl"):
-        folder = idx.parent.parent
-        rooms[slug(folder.name)] = folder
-    return rooms
+    """{room id: Room} for every indexed data room."""
+    return data().rooms()
 
 
 def inside(base, p):
@@ -91,36 +115,6 @@ def inside(base, p):
         return p.resolve().is_relative_to(base.resolve())
     except OSError:
         return False
-
-
-# ---------- the file tree ----------
-# The data root is one folder per fund, holding only what the fund sent (scripts/reorganize_data_root.py builds
-# it from a Drive download). Folder names inside a fund are kept as they are and mean nothing to the console.
-
-
-def listing(v):
-    """The entries of folder v (relative to the data root), folders first, or None if it is not one."""
-    d = DATA_ROOT / v
-    if not inside(DATA_ROOT, d) or not d.is_dir():
-        return None
-    out = []
-    for c in d.iterdir():
-        if c.name.startswith(".") or c.name == "_index":
-            continue
-        st = c.stat()
-        path = f"{v}/{c.name}" if v else c.name
-        out.append(
-            {
-                "name": c.name,
-                "dir": c.is_dir(),
-                "size": st.st_size,
-                "mtime": st.st_mtime,
-                "path": path,
-                "real": path,
-                "room": c.is_dir() and (c / "_index" / "pages.jsonl").exists(),
-            }
-        )
-    return sorted(out, key=lambda e: (not e["dir"], e["name"].lower()))
 
 
 # ---------- where each fund stands ----------
@@ -187,66 +181,6 @@ def with_review(summary, latest):
     d = latest["decision"]
     decision = {k: d[k] for k in ("state", "needs_signoff", "confirmed", "signed_off", "blockers")}
     return {**summary, "gates": gates, "flags": d["flags"], "disposition": d["disposition"], "decision": decision}
-
-
-# ---------- full-text search over indexed pages (lazy, mtime-cached) ----------
-
-_PAGES: dict[Path, tuple[float, list[dict]]] = {}
-
-
-def room_pages(folder):
-    idx = folder / "_index" / "pages.jsonl"
-    m = idx.stat().st_mtime
-    hit = _PAGES.get(idx)
-    if not hit or hit[0] != m:
-        hit = (m, [json.loads(line) for line in idx.open()])
-        _PAGES[idx] = hit
-    return hit[1]
-
-
-def search(q, rooms, limit=80):
-    terms = [t for t in re.findall(r"\w+", q.lower()) if len(t) > 1]
-    if not terms:
-        return []
-    named, out = [], []
-    for fid, folder in rooms.items():
-        pages = room_pages(folder)
-        # Evidence cites a file by name or path, words that rarely appear on its pages, so match those too.
-        firsts: dict[str, dict] = {}
-        for p in pages:
-            firsts.setdefault(p["file"], p)
-        for rel, p in firsts.items():
-            if all(term in rel.lower() for term in terms):
-                named.append(
-                    {
-                        "fund": fid,
-                        "room": folder.name,
-                        "file": rel,
-                        "page": p["page"],
-                        "path": str((folder / rel).relative_to(DATA_ROOT)),
-                        "snippet": re.sub(r"\s+", " ", p["text"][:320]).strip(),
-                        "score": 0,
-                        "by_name": True,
-                    }
-                )
-        for p in pages:
-            t = p["text"].lower()
-            if all(term in t for term in terms):
-                i = t.find(terms[0])
-                snip = re.sub(r"\s+", " ", p["text"][max(0, i - 120) : i + 200]).strip()
-                out.append(
-                    {
-                        "fund": fid,
-                        "room": folder.name,
-                        "file": p["file"],
-                        "page": p["page"],
-                        "path": str((folder / p["file"]).relative_to(DATA_ROOT)),
-                        "snippet": snip,
-                        "score": sum(t.count(term) for term in terms),
-                    }
-                )
-    out.sort(key=lambda r: -r["score"])
-    return (named + out)[:limit]
 
 
 # ---------- analytics over every logged run ----------
@@ -352,10 +286,6 @@ class H(BaseHTTPRequestHandler):
             return self.send({"error": "not found"}, code=404)
         return self.send(p.read_bytes(), mimetypes.guess_type(p.name)[0] or "application/octet-stream")
 
-    def data_path(self, qs):
-        p = DATA_ROOT / qs.get("path", [""])[0].lstrip("/")
-        return p if inside(DATA_ROOT, p) and p.exists() else None
-
     def body(self):
         return json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
 
@@ -394,15 +324,14 @@ class H(BaseHTTPRequestHandler):
             stamps, latest, catalogs = store.stamps_by_fund(), store.latest_summaries(), store.catalog_summaries()
             intakes, reviewed, decided = store.intakes(), disposition.latest_by_fund(), disposition.decided_on_by_fund()
             statuses, material = fund_status.current(), store.latest_material()
-            for fid, folder in sorted(rooms.items()):
+            for fid, room in sorted(rooms.items()):
                 rs = stamps.get(fid, [])
-                rel = folder.relative_to(DATA_ROOT)
                 intake = intakes.get(fid) or dict.fromkeys(store.INTAKE_FIELDS)
                 out.append(
                     {
                         "id": fid,
-                        "name": folder.name,
-                        "path": str(rel),
+                        "name": room.name,
+                        "path": room.path,
                         "runs": rs,
                         "latest": with_review(latest.get(fid), reviewed.get(fid)),
                         "catalog": catalogs.get(fid),
@@ -449,38 +378,42 @@ class H(BaseHTTPRequestHandler):
             return self.send(
                 {
                     "password": bool(session_key()),
-                    "data_root": str(DATA_ROOT),
+                    "data_root": data().label,
                     "rooms": len(rooms),
                     "running": sum(j["status"] == "running" for j in jobs.recent(20)),
                 }
             )
         if parts == ["api", "search"]:
             fund = qs.get("fund", [None])[0]
-            return self.send(search(qs.get("q", [""])[0], {fund: rooms[fund]} if fund in rooms else rooms))
+            return self.send(data().search(qs.get("q", [""])[0], only=fund if fund in rooms else None))
         if parts == ["api", "fs"]:
             v = qs.get("path", [""])[0].strip("/")
-            entries = listing(v)
+            entries = data().listing(v)
             if entries is None:
                 return self.send({"error": "not a folder"}, code=404)
             return self.send({"path": v, "root": DATA_ROOT.name, "entries": entries})
         if parts == ["api", "raw"]:
-            p = self.data_path(qs)
-            if p is None or not p.is_file():
+            path = qs.get("path", [""])[0]
+            found = data().file(path)
+            if found is None:
                 return self.send({"error": "not found"}, code=404)
-            ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-            if ctype.startswith("text/") or p.suffix.lower() in TEXT_EXT:
+            kind, where = found
+            if kind == "url":  # hosted: the browser fetches the file from Storage with a short-lived link
+                return self.send(b"", "text/plain", 302, {"Location": where})
+            ctype = mimetypes.guess_type(where.name)[0] or "application/octet-stream"
+            if ctype.startswith("text/") or where.suffix.lower() in TEXT_EXT:
                 ctype = "text/plain; charset=utf-8"
-            return self.send(p.read_bytes(), ctype, extra={"Content-Disposition": f'inline; filename="{slug(p.name)}"'})
+            return self.send(
+                where.read_bytes(), ctype, extra={"Content-Disposition": f'inline; filename="{slug(where.name)}"'}
+            )
         if parts == ["api", "filepages"]:
-            p = self.data_path(qs)
-            if p is None:
-                return self.send({"error": "not found"}, code=404)
-            for folder in rooms.values():
-                if inside(folder, p):
-                    rel = str(p.relative_to(folder))
-                    pages = [{"page": x["page"], "text": x["text"]} for x in room_pages(folder) if x["file"] == rel]
-                    return self.send({"room": folder.name, "pages": pages})
-            return self.send({"room": None, "pages": []})
+            path = qs.get("path", [""])[0].lstrip("/")
+            room = next((r for r in rooms.values() if path.startswith(r.path + "/")), None)
+            if room is None:
+                return self.send({"room": None, "pages": []})
+            rel = path[len(room.path) + 1 :]
+            pages = [{"page": x["page"], "text": x["text"]} for x in data().pages(room) if x["file"] == rel]
+            return self.send({"room": room.name, "pages": pages})
         if parts[:2] == ["api", "run"] and len(parts) == 4:
             fid, stamp = parts[2], parts[3]
             found = store.run(fid, stamp)
@@ -492,7 +425,7 @@ class H(BaseHTTPRequestHandler):
                     **found,
                     "review": review.for_run(fid, stamp),
                     "decision": disposition.for_run(fid, stamp),
-                    "room_path": str(room.relative_to(DATA_ROOT)) if room else None,
+                    "room_path": room.path if room else None,
                 }
             )
         if parts[:2] == ["api", "note"] and len(parts) == 4:
@@ -501,16 +434,19 @@ class H(BaseHTTPRequestHandler):
             j = jobs.get(parts[2])
             return self.send(j) if j else self.send({"error": "unknown job"}, code=404)
         if parts[:2] == ["api", "catalog"] and len(parts) == 3:
-            folder = rooms.get(parts[2])
-            if not folder:
+            room = rooms.get(parts[2])
+            if not room:
                 return self.send({"error": "unknown fund"}, code=404)
             hit = store.catalog(parts[2])
             if hit is None:
-                log("catalog", f"building catalog for {folder.name}")
+                folder = data().folder(room)
+                if folder is None:
+                    return self.send({"error": "no catalog yet; scripts/upload_data_root.py builds it"}, code=404)
+                log("catalog", f"building catalog for {room.name}")
                 build_catalog(folder)
                 hit = store.catalog(parts[2])
             summary, docs = hit
-            return self.send({"summary": summary, "docs": docs, "room_path": str(folder.relative_to(DATA_ROOT))})
+            return self.send({"summary": summary, "docs": docs, "room_path": room.path})
         if parts[:2] == ["api", "history"] and len(parts) == 3:
             return self.send(store.summaries(parts[2], newest_first=False))
         self.send({"error": "not found"}, code=404)
@@ -649,15 +585,18 @@ class H(BaseHTTPRequestHandler):
             return
         parts = [p for p in urlparse(self.path).path.split("/") if p]
         if parts[:2] == ["api", "catalog"] and len(parts) == 4 and parts[3] == "rebuild":
-            folder = discover().get(parts[2])
-            if not folder:
+            room = discover().get(parts[2])
+            if not room:
                 return self.send({"error": "unknown fund"}, code=404)
+            folder = data().folder(room)
+            if folder is None:
+                return self.send({"error": "catalogs are rebuilt by scripts/upload_data_root.py here"}, code=409)
             try:
                 build_catalog(folder)
             except Exception as e:
-                log("catalog", f"rebuild failed for {folder.name}: {e}", "error")
+                log("catalog", f"rebuild failed for {room.name}: {e}", "error")
                 return self.send({"error": f"{type(e).__name__}: {e}"}, code=500)
-            log("catalog", f"rebuilt catalog for {folder.name}")
+            log("catalog", f"rebuilt catalog for {room.name}")
             return self.send({"ok": True})
         if parts == ["api", "screen"]:
             return self.queue_screen()
@@ -668,12 +607,12 @@ class H(BaseHTTPRequestHandler):
     def queue_screen(self):
         """Ask for a screen: a queued job the browser then runs with POST /api/screen/<job>/run."""
         body = self.body()
-        folder = discover().get(body.get("fund"))
-        if not folder:
+        room = discover().get(body.get("fund"))
+        if not room:
             return self.send({"error": "unknown fund"}, code=404)
         ex, jd = body.get("extractor", "claude"), body.get("judge", "jev")
-        jid = jobs.create(body["fund"], folder.name, ex, jd, [g["id"] for g in load_gates()])
-        log("job", f"screen queued: {folder.name} (extractor {ex}, judge {jd})", job=jid)
+        jid = jobs.create(body["fund"], room.name, ex, jd, [g["id"] for g in load_gates()])
+        log("job", f"screen queued: {room.name} (extractor {ex}, judge {jd})", job=jid)
         self.send({"job": jid})
 
     def run_screen(self, jid):
@@ -682,12 +621,12 @@ class H(BaseHTTPRequestHandler):
         job = jobs.claim(jid)
         if not job:
             return self.send({"error": "unknown job, or already started"}, code=409)
-        folder = discover().get(job["fund_id"])
+        room = discover().get(job["fund_id"])
         tr = Tracker(on_change=lambda steps: jobs.progress(jid, steps))
         try:
-            if not folder:
+            if not room:
                 raise LookupError(f"no data room {job['fund_id']}")
-            _, summary, _ = run(folder, job["extractor"], job["judge"], tracker=tr)
+            _, summary, _ = run(data().data_room(room), job["extractor"], job["judge"], tracker=tr)
         except (SystemExit, Exception) as e:  # missing key, API errors
             error = str(e) or type(e).__name__
             jobs.finish(jid, tr.steps, error=error)
