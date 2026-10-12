@@ -11,9 +11,9 @@ test('answering the checks unblocks confirmation, and the confirmation is record
 
   await page.locator('#p-screen .gcard[data-g="operability"]').click();
   await page.locator('#drawer .rv-check[data-check="custody"] [data-ok="1"]').click();
-  await expect(page.locator('#drawer .rv-check[data-check="custody"]')).toContainText('Yes');
+  await expect(page.locator('#drawer .rv-check[data-check="custody"]')).toContainText('Yes · CIO'); // the saved answer, not the button
   await page.locator('#drawer .rv-check[data-check="pricing"] [data-ok="1"]').click();
-  await expect(page.locator('#drawer .rv-check[data-check="pricing"]')).toContainText('Yes');
+  await expect(page.locator('#drawer .rv-check[data-check="pricing"]')).toContainText('Yes · CIO');
   await page.locator('#drawer [part~="close-button"]').click();
   await expect(page.locator('#drawer')).not.toHaveAttribute('open', '');
 

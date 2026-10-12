@@ -150,7 +150,12 @@ export async function render(el, r) {
     const review = () => reviewPanel($('#rv', d), {
       fundId: id, run: runId, rec: g, eff,
       // A review can change the disposition, so reload the run, not just the review.
-      onSaved: async () => { data = await api(`run/${encodeURIComponent(id)}/${runId}`); screenTab($('#p-screen', el)); gateDrawer(data.gates.find(x => x.gate === g.gate)); },
+      // Redraw the drawer only if it is still open: the analyst may have closed it while the save ran.
+      onSaved: async () => {
+        data = await api(`run/${encodeURIComponent(id)}/${runId}`);
+        screenTab($('#p-screen', el));
+        if ($('#drawer').open) gateDrawer(data.gates.find(x => x.gate === g.gate));
+      },
     });
     if (!g.brief) {
       d.innerHTML = `${resultChip(eff ? eff.result : g.result)}<p class="muted">${esc(g.note || 'This gate is not automated in the prototype.')}</p><div id="rv"></div>`;

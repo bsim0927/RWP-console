@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
-"""Local analyst console. [PORT=8765] python3 server.py [data-root] -> http://127.0.0.1:8765"""
+"""The analyst console.
+
+    [PORT=8765] python3 server.py [data-root]     # local, at http://127.0.0.1:8765
+
+Deployed, Vercel imports `app` (WSGI) from this module and the data root comes from RWP_DATA_ROOT. Both paths
+run the same handler. With SITE_PASSWORD set, every page and API call needs a session from /login.
+"""
 
 import collections
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
@@ -11,9 +19,12 @@ import threading
 import time
 import uuid
 from datetime import date
+from email.message import Message
+from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import yaml
 
@@ -26,9 +37,8 @@ JOBS: dict[str, dict] = {}
 LOG: collections.deque[dict] = collections.deque(maxlen=1000)  # in-memory event log, newest last
 WEB = ROOT / "web"
 
-DATA_ROOT = Path(
-    sys.argv[1] if len(sys.argv) > 1 else os.environ.get("RWP_DATA_ROOT", str(Path.home() / "Desktop/RWP-funds"))
-).resolve()
+# The command line sets it locally (see __main__); an importer such as Vercel's runtime has other arguments.
+DATA_ROOT = Path(os.environ.get("RWP_DATA_ROOT", str(Path.home() / "Desktop/RWP-funds"))).resolve()
 slug = lambda n: re.sub(r"[^\w.-]+", "_", n)
 mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("text/markdown", ".md")
@@ -40,6 +50,32 @@ TEXT_EXT = (".md", ".csv", ".json", ".yaml", ".yml", ".txt", ".jsonl")
 
 def log(kind, msg, level="info", **extra):
     LOG.append({"t": time.time(), "kind": kind, "level": level, "msg": msg, **extra})
+
+
+# ---------- the shared password ----------
+# A session cookie is an expiry signed with a key derived from SITE_PASSWORD, so changing the password signs
+# everyone out. Unset, the console is open: local use and the test suites.
+
+SESSION_COOKIE, SESSION_DAYS = "rwp_session", 30
+
+
+def session_key():
+    pw = os.environ.get("SITE_PASSWORD", "")
+    return hmac.new(pw.encode(), b"rwp-console session", hashlib.sha256).digest() if pw else None
+
+
+def session_value(now=None):
+    exp = str(int((now or time.time()) + SESSION_DAYS * 86400))
+    return f"{exp}.{hmac.new(session_key() or b'', exp.encode(), hashlib.sha256).hexdigest()}"
+
+
+def valid_session(value, now=None):
+    key = session_key()
+    exp, _, sig = (value or "").partition(".")
+    if not key or not exp.isdigit():
+        return False
+    good = hmac.new(key, exp.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(sig, good) and int(exp) > (now or time.time())
 
 
 def discover():
@@ -264,6 +300,52 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def signed_in(self):
+        if not session_key():
+            return True
+        morsel = SimpleCookie(self.headers.get("Cookie") or "").get(SESSION_COOKIE)
+        return morsel is not None and valid_session(morsel.value)
+
+    def guard(self):
+        """Run the sign-in pages, and turn away anyone without a session. True when the request may go on."""
+        path = urlparse(self.path).path
+        if path == "/login":
+            if self.command == "POST":
+                self.sign_in()
+            else:
+                self.send((WEB / "login.html").read_bytes(), "text/html; charset=utf-8")
+            return False
+        if path == "/logout":
+            self.send(b"", "text/plain", 303, {"Location": "/login", "Set-Cookie": self.cookie("", 0)})
+            return False
+        if self.signed_in():
+            return True
+        if path.startswith("/api/"):
+            self.send({"error": "sign in first"}, code=401)
+        else:
+            self.send(b"", "text/plain", 303, {"Location": "/login"})
+        return False
+
+    def sign_in(self):
+        raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
+        given = (parse_qs(raw).get("password") or [""])[0]
+        want = os.environ.get("SITE_PASSWORD", "")
+        if want and hmac.compare_digest(given.encode(), want.encode()):
+            log("auth", "signed in")
+            return self.send(
+                b"",
+                "text/plain",
+                303,
+                {"Location": "/", "Set-Cookie": self.cookie(session_value(), SESSION_DAYS * 86400)},
+            )
+        log("auth", "a sign-in failed", "warn")
+        time.sleep(1)  # slows guessing
+        self.send(b"", "text/plain", 303, {"Location": "/login?error=1"})
+
+    def cookie(self, value, max_age):
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        return f"{SESSION_COOKIE}={value}; Max-Age={max_age}; Path=/; HttpOnly; SameSite=Lax{secure}"
+
     def static(self, rel):
         p = WEB / rel
         if not inside(WEB, p) or not p.is_file():
@@ -278,6 +360,8 @@ class H(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
 
     def do_GET(self):
+        if not self.guard():
+            return
         t0, self._code = time.time(), 200
         try:
             self.route_get()
@@ -393,6 +477,7 @@ class H(BaseHTTPRequestHandler):
         if parts == ["api", "meta"]:
             return self.send(
                 {
+                    "password": bool(session_key()),
                     "data_root": str(DATA_ROOT),
                     "rooms": len(rooms),
                     "running": sum(j["status"] == "running" for j in JOBS.values()),
@@ -586,14 +671,20 @@ class H(BaseHTTPRequestHandler):
         return True
 
     def do_PUT(self):
+        if not self.guard():
+            return
         if not (self.policy_write("PUT") or self.gate_write("PUT") or self.intake_write()):
             self.send({"error": "not found"}, code=404)
 
     def do_DELETE(self):
+        if not self.guard():
+            return
         if not self.gate_write("DELETE"):
             self.send({"error": "not found"}, code=404)
 
     def do_POST(self):
+        if not self.guard():
+            return
         if self.policy_write("POST") or self.gate_write("POST") or self.review_write():
             return
         parts = [p for p in urlparse(self.path).path.split("/") if p]
@@ -646,7 +737,46 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
+class WsgiRequest(H):
+    """One WSGI request through the same handler, with no socket: how Vercel runs the console. Everything
+    the handler answers goes through send(), which this captures instead of writing to a connection."""
+
+    def __init__(self, environ):  # deliberately not BaseHTTPRequestHandler's, which serves a socket
+        self.command = environ["REQUEST_METHOD"]
+        path = (environ.get("PATH_INFO") or "/").encode("latin-1").decode("utf-8", "replace")  # PEP 3333
+        qs = environ.get("QUERY_STRING")
+        self.path = quote(path) + (f"?{qs}" if qs else "")
+        self.headers = Message()
+        for k, v in environ.items():
+            if k.startswith("HTTP_"):
+                self.headers[k[5:].replace("_", "-").title()] = v
+        for k in ("CONTENT_LENGTH", "CONTENT_TYPE"):
+            if environ.get(k):
+                self.headers[k.replace("_", "-").title()] = environ[k]
+        self.rfile = environ["wsgi.input"]
+        self.reply: tuple[int, str, bytes, dict] = (500, "application/json", b'{"error": "no response"}', {})
+
+    def send(self, body, ctype="application/json", code=200, extra=None):
+        self._code = code
+        self.reply = (code, ctype, body if isinstance(body, bytes) else json.dumps(body).encode(), extra or {})
+
+
+def app(environ, start_response):
+    req = WsgiRequest(environ)
+    handler = getattr(req, f"do_{req.command}", None)
+    if handler is None:
+        req.send({"error": "method not allowed"}, code=405)
+    else:
+        handler()
+    code, ctype, data, extra = req.reply
+    headers = [("Content-Type", ctype), ("Content-Length", str(len(data))), ("Cache-Control", "no-store")]
+    start_response(f"{code} {HTTPStatus(code).phrase}", headers + list(extra.items()))
+    return [data]
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        DATA_ROOT = Path(sys.argv[1]).resolve()
     log("server", f"started, data root {DATA_ROOT}")
     port = int(os.environ.get("PORT", 8765))
     print(f"http://127.0.0.1:{port}")

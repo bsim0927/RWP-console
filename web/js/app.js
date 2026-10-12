@@ -160,7 +160,7 @@ async function init() {
   try {
     const [meta, cfg] = await Promise.all([api('meta'), cached('config', 60000)]);
     setGateOrder(cfg.gates.map(g => g.parsed.id));
-    $('#nav-foot').innerHTML = `<div>${meta.rooms} indexed data rooms</div><div class="mono" title="Data root">${esc(meta.data_root)}</div>`;
+    $('#nav-foot').innerHTML = `<div>${meta.rooms} indexed data rooms</div><div class="mono" title="Data root">${esc(meta.data_root)}</div>${meta.password ? '<a href="/logout">Sign out</a>' : ''}`;
   } catch (e) { toast('Server unreachable: ' + esc(e.message), 'crit'); }
   // Pick up screens still running on the server, e.g. after a page reload.
   try {
