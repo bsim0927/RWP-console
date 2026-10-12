@@ -24,6 +24,8 @@ jobs:
           E2E_BASE_URL: ${{ github.event.deployment_status.environment_url }}
           # Protected previews: create a Vercel "Protection Bypass for Automation" secret.
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          # The console's own shared password (SITE_PASSWORD on Vercel), so the recipes can sign in.
+          E2E_SITE_PASSWORD: ${{ secrets.E2E_SITE_PASSWORD }}
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with: { name: preview-smoke-report, path: e2e/.report/, retention-days: 14 }

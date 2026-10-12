@@ -41,6 +41,7 @@ folders) from a Drive download into the data root, one folder per fund, and leav
     uv run python scripts/reorganize_data_root.py <drive-download> ~/Desktop/RWP-funds --yes   # once per download
     uv run python server.py [data-root]           # the console, at http://127.0.0.1:8765 (PORT= to change)
     uv run python screen.py <data-room-folder>    # screen one data room from the command line
+    scripts/deploy-vercel.sh                      # deploy to Vercel (walks you through it; CONTRIBUTING.md)
 
 The console covers the overview, the screening queue, each fund (screen, catalog, files, search, history,
 note, report), catalogs, a file browser, document search, analytics, the agent monitor, and gates and policy.
