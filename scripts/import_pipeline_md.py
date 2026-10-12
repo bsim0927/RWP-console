@@ -5,9 +5,9 @@
     uv run python scripts/import_pipeline_md.py <PIPELINE.md> <data-root> --yes    # import
 
 After this the console never reads PIPELINE.md again: statuses live in fund_status and move only by the CIO.
-Each row is matched to a data room under <data-root> by manager and strategy, as the console used to match
-it. A row with no data room is still kept, under the slug of "Manager - Strategy", so a room filed later with
-that name picks it up. The row's last action, next action and material date go in the import note. Owners
+Each row is matched to a fund folder under <data-root> (indexed or not) by its manager and at least one telling
+strategy word, and each folder goes to one row at most. A row with no folder is still kept, under the slug of
+"Manager - Strategy", so a folder filed later with that name picks it up. The row's last action, next action and material date go in the import note. Owners
 fill an empty intake owner only. Re-running is safe: funds that already have a status are skipped.
 """
 
@@ -44,16 +44,44 @@ def words(s):
     return set(re.findall(r"[a-z0-9]+", s.lower()))
 
 
-def room_for(row, rooms):
-    """The data room whose folder names this row's manager and shares the most strategy words."""
-    best, score = None, -1
-    for name in rooms:
-        mgr, _, strat = name.partition(" - ")
-        if words(row["Manager"]) and words(row["Manager"]) <= words(mgr) | words(name):
-            s = len(words(strat) & words(row.get("Strategy", "")))
-            if s > score:
-                best, score = name, s
-    return best
+GENERIC = {"fund", "funds", "and", "the", "of", "for", "a", "an"}  # shared by too many strategies to tell them apart
+
+
+PLACEHOLDER = {"tbd", "unidentified", "unknown"}  # a folder whose strategy is not known yet
+
+
+def initials(text):
+    return "".join(w[0] for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in GENERIC)
+
+
+def fit(row, name):
+    """How well a fund folder fits a row: the strategy words they share, or None when it is not this fund.
+    The managers must match (either name may be the longer: "HPS" and "HPS BlackRock"), and so must at least
+    one telling strategy word, or an acronym ("ABF" for "Asset-Backed Finance"), so that two funds from one
+    manager (BREIT and BCRED) never share a folder. A folder named for the manager alone, or with a placeholder
+    strategy ("TBD"), fits on the manager."""
+    mgr, _, strat = name.partition(" - ")
+    m, fm = words(row["Manager"]), words(mgr)
+    if not m or not fm or not (m <= fm | words(name) or fm <= m):
+        return None
+    if not strat or words(strat) <= PLACEHOLDER:
+        return 0
+    shared = (words(strat) & words(row.get("Strategy", ""))) - GENERIC
+    acronym = any(len(w) > 1 and w in initials(row.get("Strategy", "")) for w in words(strat) - GENERIC)
+    return len(shared) + acronym or None
+
+
+def assign(rows_, rooms):
+    """{row index: folder}, each folder given to at most one row, best fit first."""
+    fits = sorted(
+        ((f, i, name) for i, r in enumerate(rows_) for name in rooms if (f := fit(r, name)) is not None),
+        key=lambda x: -x[0],
+    )
+    out: dict[int, str] = {}
+    for _, i, name in fits:
+        if i not in out and name not in out.values():
+            out[i] = name
+    return out
 
 
 def note_for(row, updated):
@@ -73,17 +101,20 @@ def main():
     a = ap.parse_args()
     text = a.pipeline_md.read_text(errors="replace")
     updated = (re.search(r"Last updated:\s*(\S+)", text) or [None, None])[1]
-    rooms = sorted({p.parent.parent.name for p in a.data_root.rglob("_index/pages.jsonl")})
+    # Every fund folder, indexed or not: the data root's own folders, and indexed rooms wherever they sit.
+    rooms = {p.parent.parent.name for p in a.data_root.rglob("_index/pages.jsonl")}
+    rooms |= {d.name for d in a.data_root.iterdir() if d.is_dir() and not d.name.startswith((".", "_"))}
+    table = rows(text)
+    match = assign(table, sorted(rooms))
     plan = []
-    for r in rows(text):
-        room = room_for(r, rooms)
-        name = room or f"{r['Manager']} - {r['Strategy']}".strip(" -")
-        plan.append((slug(name), bool(room), r))
+    for i, r in enumerate(table):
+        name = match.get(i) or f"{r['Manager']} - {r['Strategy']}".strip(" -")
+        plan.append((slug(name), i in match, r))
     target = urlsplit(db.url())
     print(f"target: {target.hostname}:{target.port}{target.path} as {target.username}")
     for fid, matched, r in plan:
         print(f"  {r['Status']:<24} {fid}{'' if matched else '   (no data room yet)'}")
-    print(f"found:  {len(plan)} rows, {sum(m for _, m, _ in plan)} matched to a data room")
+    print(f"found:  {len(plan)} rows, {sum(m for _, m, _ in plan)} matched to a fund folder")
     if not a.yes:
         print("dry run; re-run with --yes to import")
         return
