@@ -11,7 +11,7 @@ import server
 
 
 @pytest.fixture
-def root(tmp_path, monkeypatch):
+def root(tmp_path, monkeypatch, db):
     monkeypatch.setattr(server, "DATA_ROOT", tmp_path)
     monkeypatch.delenv("SITE_PASSWORD", raising=False)
     return tmp_path
@@ -90,7 +90,7 @@ def test_a_session_is_refused_once_expired_tampered_or_the_password_changes(monk
     assert not server.valid_session(good)
 
 
-def test_paths_and_errors_survive_the_wsgi_adapter(root):
+def test_paths_and_errors_survive_the_wsgi_adapter(root, db):
     (root / "Zürich Fund - Credit" / "_index").mkdir(parents=True)
     (root / "Zürich Fund - Credit" / "_index" / "pages.jsonl").write_text("")
     path = b"/api/fs".decode("latin-1")

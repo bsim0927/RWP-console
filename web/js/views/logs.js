@@ -153,7 +153,7 @@ export async function render(el, r) {
   // ---------- server events (secondary) ----------
   function drawServer() {
     const ev = server.events.filter(e => e.kind !== 'http').reverse();
-    $('#t-server', el).innerHTML = `<div class="card"><div class="hd"><h2 class="sec">Server events</h2><span class="sec-sub">jobs, catalog builds, gate edits and errors since the server started · request log hidden</span></div>
+    $('#t-server', el).innerHTML = `<div class="card"><div class="hd"><h2 class="sec">Server events</h2><span class="sec-sub">jobs, catalog builds, gate edits, sign-ins and errors, the latest 1,000 · request log hidden</span></div>
       <div class="logs">${ev.length ? ev.map(e => `<div class="logrow ${e.level}"><span class="ts">${fmtTime(e.t)}</span><span class="k">${esc(e.kind)}</span><span class="m">${esc(e.msg)}</span><span class="x">${e.run ? esc(e.run) : ''}</span></div>`).join('') : empty('hdd-network', 'Nothing yet')}</div></div>`;
   }
 
