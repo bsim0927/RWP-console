@@ -55,15 +55,21 @@ def match_quote(text, quote):
 
 
 class DataRoom:
-    def __init__(self, folder):
-        self.folder = Path(folder)
-        idx = self.folder / "_index" / "pages.jsonl"
-        if not idx.exists():
-            raise SystemExit(f"no index at {idx}")
-        with idx.open() as fh:
-            self.pages = [json.loads(line) for line in fh]
+    """A room's indexed pages: read from its folder on disk, or given by name and pages when the console is
+    hosted and has no disk (sg/datasource.py). `folder` is None then."""
+
+    def __init__(self, folder=None, *, name=None, pages=None):
+        self.folder = Path(folder) if folder is not None else None
+        if pages is None:
+            idx = self.folder / "_index" / "pages.jsonl"  # type: ignore[operator]
+            if not idx.exists():
+                raise SystemExit(f"no index at {idx}")
+            with idx.open() as fh:
+                pages = [json.loads(line) for line in fh]
+        self.pages = pages
         self.by_key = {(p["file"], p["page"]): p for p in self.pages}
-        self.name = self.folder.name
+        self.name = name or self.folder.name  # type: ignore[union-attr]
+        self.id = re.sub(r"[^\w.-]+", "_", self.name)
 
     def retrieve(self, keywords, top_k=6, max_chars=6000):
         """Keyword-count ranking. Crude on purpose; swap for embeddings later."""

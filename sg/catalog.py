@@ -9,7 +9,6 @@ import hashlib
 import re
 import subprocess
 from collections import defaultdict
-from pathlib import Path
 
 from . import store
 from .dataroom import DataRoom, norm
@@ -374,9 +373,12 @@ def summarize(name, docs):
     }
 
 
-def load(folder):
-    """Catalog docs for a room, building it when missing or from before the section index."""
-    hit = store.catalog(re.sub(r"[^\w.-]+", "_", Path(folder).name))
+def load(room):
+    """Catalog docs for a room (a DataRoom), building it when missing or from before the section index. A
+    hosted room has no folder to build from: scripts/upload_data_root.py builds its catalog before upload."""
+    hit = store.catalog(room.id)
     if hit and hit[1] and all("structure" in d for d in hit[1]):
         return hit[1]
-    return build(folder)[2]
+    if room.folder is None:
+        raise SystemExit(f"no catalog for {room.name}; build it with scripts/upload_data_root.py")
+    return build(room.folder)[2]

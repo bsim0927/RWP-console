@@ -247,15 +247,16 @@ def reduce_gates(policy, results):
 
 
 def run(data_room, extractor, judge, only=None, tracker=None):
-    room = DataRoom(data_room)
+    """Screen a room: a DataRoom, or the folder of one on disk."""
+    room = data_room if isinstance(data_room, DataRoom) else DataRoom(data_room)
     pol = store.policy()
     policy = yaml.safe_load(pol["yaml"])
     tr = tracker or Tracker()
     gates, gate_yaml = load_gates(only, with_yaml=True)
     e = tr.begin("catalog", "catalog")
-    catalog = load_catalog(data_room)
+    catalog = load_catalog(room)
     tr.end(e, f"{sum(d['canonical'] for d in catalog)} canonical documents")
-    fund_id = re.sub(r"[^\w.-]+", "_", room.name)
+    fund_id = room.id
     share_class = store.intake(fund_id)["share_class"]
     with ThreadPoolExecutor(max_workers=len(gates) + 1) as pool:
         marketing = pool.submit(check_marketing, room, catalog, extractor, tr)

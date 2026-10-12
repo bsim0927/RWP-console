@@ -4,9 +4,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
-import server
+from sg.datasource import LocalSource
 
 PPM = "01 Inbound/Monroe Capital OpCo - PPM.pdf"
 
@@ -23,13 +22,10 @@ class Search(unittest.TestCase):
             {"file": "01 Inbound/Dataroom/Term Sheet.pdf", "page": 2, "text": "Minimum purchase: $10,000."},
         ]
         (self.room / "_index" / "pages.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-        patch = mock.patch.object(server, "DATA_ROOT", self.root)
-        patch.start()
-        self.addCleanup(patch.stop)
         self.addCleanup(self.tmp.cleanup)
 
     def search(self, q):
-        return server.search(q, {"monroe": self.room})
+        return LocalSource(self.root).search(q)
 
     def test_finds_file_by_the_name_evidence_cites(self):
         for q in ("Monroe Capital OpCo - PPM.pdf", PPM, "opco ppm"):
