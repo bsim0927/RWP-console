@@ -3,7 +3,8 @@ import { $, $$, api, bust, esc, gateName, gateColor, setGateOrder, skeleton, toa
 import { setCrumbs } from '../app.js';
 
 const WHEN = { any_review: 'Any gate needs analyst review', any_incomplete: 'Any gate is incomplete or not yet run', any_fail: 'Any gate is not met', otherwise: 'Otherwise' };
-const RESULTS = ['Pass', 'Fail', 'Incomplete', 'Route with disclosure'];
+const RESULTS = ['Pass', 'Fail', 'Incomplete']; // sg/gate_store.RESULTS; anything more is a flag
+const CHECK_NAMES = ['total_pct', 'fees_disagree']; // sg/gate_store.CHECK_NAMES
 const DOC_TYPES = ['terms', 'offering document', 'governing agreement', 'subscription', 'ddq', 'deck', 'track record', 'policies/compliance', 'financial statements'];
 const TEMPLATE = () => ({
   id: 'new_gate', version: 1,
@@ -18,7 +19,7 @@ const clone = o => JSON.parse(JSON.stringify(o));
 export async function render(el) {
   setCrumbs([['Gates and policy']]);
   el.innerHTML = `<div class="page">${skeleton(8)}</div>`;
-  const [cfg, hist] = await Promise.all([api('config'), api('gates/history')]);
+  const [cfg, hist, people] = await Promise.all([api('config'), api('gates/history'), api('reviewers')]);
   setGateOrder(cfg.gates.map(g => g.parsed.id));
   const pol = cfg.policy.parsed;
   const reload = async () => { bust('config'); bust('funds'); await render(el); };
@@ -31,6 +32,11 @@ export async function render(el) {
       <button class="ghost-btn sm" id="pol-edit"><sl-icon name="pencil"></sl-icon>Edit</button></div><div class="bd flush">
       ${pol.rules.map((r, i) => `<div class="rule"><span class="i">${i + 1}</span><div style="flex:1"><code>${esc(r.when)}</code> <span class="dim">· ${esc(WHEN[r.when] || '')}</span></div><sl-icon name="arrow-right" class="dim"></sl-icon><div style="flex:1.3;font-weight:550">${esc(r.disposition)}</div></div>`).join('')}</div></div>
     <div class="stack">${cfg.gates.map((g, i) => gateCard(g, i, cfg.gates.length)).join('')}</div>
+    <div class="card" style="margin-top:14px" id="reviewers"><div class="hd"><h2 class="sec">Reviewers</h2><span class="sec-sub">who reviews screen runs; the CIO also signs off "not covered"</span></div><div class="bd flush">
+      <table class="t compact"><tr><th>Name</th><th>Role</th><th>Active</th><th></th></tr>${people.map(p => `<tr data-rid="${esc(p.id)}"><td><input class="fi" data-f="name" aria-label="Reviewer name" value="${esc(p.name)}" style="max-width:240px"></td>
+        <td><select class="fi" data-f="role" aria-label="Role" style="max-width:140px"><option value="analyst" ${p.role === 'analyst' ? 'selected' : ''}>Analyst</option><option value="cio" ${p.role === 'cio' ? 'selected' : ''}>CIO</option></select></td>
+        <td><input type="checkbox" class="fi-cb" data-f="active" aria-label="Active" ${p.active ? 'checked' : ''}></td><td class="n"><button class="ghost-btn sm" data-save-rv><sl-icon name="check-lg"></sl-icon>Save</button></td></tr>`).join('')}
+      <tr><td><input class="fi" id="rv-new" aria-label="New reviewer name" placeholder="Add a reviewer by name" style="max-width:240px"></td><td></td><td></td><td class="n"><button class="ghost-btn sm" id="rv-add"><sl-icon name="plus-lg"></sl-icon>Add</button></td></tr></table></div></div>
     <div class="card" style="margin-top:14px"><div class="hd"><h2 class="sec">Change history</h2><span class="sec-sub">${hist.length} saved versions</span></div><div class="bd flush">
       ${hist.length ? `<table class="t compact"><tr><th>Saved</th><th>Gate</th><th>Version</th><th>Why</th><th></th></tr>${hist.slice(0, 40).map(h => `<tr><td class="tnum dim">${fmtDT(stampDate(h.stamp))}</td><td>${esc(gateName(h.id || h.gate_file))}</td><td class="mono">v${esc(h.version)}</td>
         <td>${h.reason === 'deleted' ? '<span class="chip crit"><sl-icon name="trash"></sl-icon>Removed</span>' : '<span class="chip ghost">Before an edit</span>'}</td>
@@ -38,6 +44,14 @@ export async function render(el) {
         : '<div class="empty" style="padding:22px">No edits yet. Each save keeps the previous version here.</div>'}</div></div></div>`;
 
   $('#new', el).addEventListener('click', () => editor(null, TEMPLATE(), '', reload));
+  const saveReviewer = async body => {
+    try { await api('reviewers', { method: 'POST', body: JSON.stringify(body) }); bust('reviewers'); toast('Reviewer saved', 'good'); reload(); } catch (e) { toast(esc(e.message), 'crit'); }
+  };
+  $$('[data-save-rv]', el).forEach(b => b.addEventListener('click', () => {
+    const tr = b.closest('tr');
+    saveReviewer({ id: tr.dataset.rid, name: $('[data-f="name"]', tr).value, role: $('[data-f="role"]', tr).value, active: $('[data-f="active"]', tr).checked });
+  }));
+  $('#rv-add', el).addEventListener('click', () => saveReviewer({ name: $('#rv-new', el).value, role: 'analyst' }));
   $('#pol-edit', el).addEventListener('click', () => policyEditor(cfg.policy, reload));
   $('#pol-hist', el).addEventListener('click', () => policyHistory(reload));
   $$('[data-edit]', el).forEach(b => b.addEventListener('click', () => { const g = cfg.gates.find(x => x.file === b.dataset.edit); editor(g.file, g.parsed, g.text, reload); }));
@@ -67,11 +81,13 @@ function gateCard(g, i, total) {
     <button class="ghost-btn sm" data-del="${esc(g.file)}" title="Remove gate"><sl-icon name="trash"></sl-icon></button></div>
     <div class="bd">${p.static_result ? `<p class="muted" style="margin:0">${esc((g.text.match(/^#\s*(.*)$/m) || [])[1] || 'Not automated: the gate returns its manual result until an analyst closes it.')}</p>` : `
       <div class="grid g2"><div>
-        <div class="eyebrow">Fields extracted</div><table class="t compact">${(ex.fields || []).map(f => `<tr><td class="mono">${esc(f.name)}${f.recurring ? ' <span class="chip ghost" style="height:18px">recurring</span>' : ''}</td><td class="dim">${esc(f.description || '')}</td></tr>`).join('')}</table>
+        <div class="eyebrow">Fields extracted</div><table class="t compact">${(ex.fields || []).map(f => `<tr><td class="mono">${esc(f.name)}${f.recurring ? ' <span class="chip ghost" style="height:18px">recurring</span>' : ''}</td><td class="dim">${esc(f.description || '')}${f.ask ? `<div class="sub">If missing, ask for: ${esc(f.ask)}</div>` : ''}</td></tr>`).join('')}</table>
         ${ex.sources ? `<div class="eyebrow" style="margin-top:14px">Sources</div><div style="display:flex;gap:5px;flex-wrap:wrap">${(ex.sources.doc_types || []).map(d => `<span class="chip ghost">${esc(d)}</span>`).join('')}</div>` : ''}
       </div><div>
         <div class="eyebrow">Judge questions</div>${(p.questions || []).map(qq => `<div style="margin-bottom:8px"><span class="mono dim">${esc(qq.id)} · ${esc(qq.type)}${qq.options ? ` · ${esc(qq.options.join(' / '))}` : ''}</span><div>${esc(qq.q)}</div></div>`).join('')}
         <div class="eyebrow" style="margin-top:14px">Derive rules</div>${(p.derive || []).map((d, k) => `<div class="rule" style="padding:6px 0"><span class="i">${k + 1}</span><code>${esc(d.if ?? 'otherwise')}</code><sl-icon name="arrow-right" class="dim"></sl-icon><b style="font-weight:550">${esc(d.then)}</b></div>`).join('')}
+        ${p.flags?.length ? `<div class="eyebrow" style="margin-top:14px">Flags</div>${p.flags.map(f => `<div class="rule" style="padding:6px 0"><sl-icon name="flag" class="dim"></sl-icon><code>${esc(f.if ?? 'always')}</code><sl-icon name="arrow-right" class="dim"></sl-icon><b style="font-weight:550">${esc(f.flag)}</b></div>`).join('')}` : ''}
+        ${p.checks?.length ? `<div class="eyebrow" style="margin-top:14px">Analyst checks</div>${p.checks.map(k => `<div class="rule" style="padding:6px 0"><sl-icon name="person-check" class="dim"></sl-icon><span>${esc(k.q)}</span><span class="dim" style="font-size:12px">a no fails the gate</span></div>`).join('')}` : ''}
         <div class="dim" style="font-size:12px;margin-top:8px">Review below confidence ${esc(p.review_if?.min_confidence ?? 0.75)}${p.review_if?.decisive ? ` on ${esc(p.review_if.decisive.join(', '))}` : ''}</div>
       </div></div>`}</div></div>`;
 }
@@ -221,8 +237,8 @@ async function editor(file, parsed, text, done) {
 
   function drawForm() {
     const manual = !!g.static_result;
-    const qs = g.questions || [], fields = g.extractor?.fields || [], rules = g.derive || [];
-    const names = [...qs.map(q => q.id), ...qs.filter(q => q.type === 'choice').map(q => q.id + '_p'), 'total_pct'].filter(Boolean);
+    const qs = g.questions || [], fields = g.extractor?.fields || [], rules = g.derive || [], flags = g.flags || [], checks = g.checks || [];
+    const names = [...qs.map(q => q.id), ...qs.filter(q => q.type === 'choice').map(q => q.id + '_p'), ...CHECK_NAMES].filter(Boolean);
     body.innerHTML = `
       <div class="ed-sec"><div class="ed-h">Gate</div><div class="ed-grid">
         <label>Id<small>lowercase_with_underscores; shown as “${esc(gateName(g.id || ''))}”</small>${inp('id', '', 'e.g. key_person')}</label>
@@ -235,7 +251,7 @@ async function editor(file, parsed, text, done) {
         <label>Section title patterns<small>one regular expression per line</small>${area('extractor.sources.sections', 'lines', 'key (person|man)', 3)}</label>
         <label>Instructions to the extractor${area('extractor.rules', '', 'Quote the clause that…', 3)}</label></div></div>
       <div class="ed-sec"><div class="ed-h">Fields to extract<small>each becomes a cited fact with a verbatim quote</small><span class="sp"></span><button class="ghost-btn sm" data-add="fields"><sl-icon name="plus-lg"></sl-icon>Field</button></div>
-        ${fields.map((f, i) => `<div class="ed-row">${inp(`extractor.fields.${i}.name`, '', 'field_name', 'style="max-width:220px" data-mono')}${inp(`extractor.fields.${i}.description`, '', 'What to find')}
+        ${fields.map((f, i) => `<div class="ed-row">${inp(`extractor.fields.${i}.name`, '', 'field_name', 'style="max-width:220px" data-mono')}${inp(`extractor.fields.${i}.description`, '', 'What to find')}${inp(`extractor.fields.${i}.ask`, '', 'If missing, ask the manager for…', 'title="Goes on the screen note\'s request list when this field keeps the gate open"')}
           <label class="ed-inline" title="Summed into total_pct by the code check"><input type="checkbox" class="fi-cb" data-k="extractor.fields.${i}.recurring" data-t="bool" ${f.recurring ? 'checked' : ''}>recurring %</label>${rowBtns('extractor.fields', i, fields.length)}</div>`).join('')}</div>
       <div class="ed-sec"><div class="ed-h">Judge questions<small>bool gives P(true); choice gives the top option and its probability as id_p</small><span class="sp"></span><button class="ghost-btn sm" data-add="questions"><sl-icon name="plus-lg"></sl-icon>Question</button></div>
         ${qs.map((q, i) => `<div class="ed-row" style="align-items:flex-start">${inp(`questions.${i}.id`, '', 'question_id', 'style="max-width:170px" data-mono')}
@@ -245,6 +261,11 @@ async function editor(file, parsed, text, done) {
         ${rules.map((r, i) => `<div class="ed-row"><span class="i rule-i">${i + 1}</span><span class="dim" style="font-size:12px">if</span>${inp(`derive.${i}.if`, 'expr', 'otherwise (leave empty)', 'data-mono')}<span class="dim" style="font-size:12px">then</span>
           <input class="fi" list="results" data-k="derive.${i}.then" value="${esc(r.then || '')}" style="max-width:220px">${rowBtns('derive', i, rules.length)}</div>`).join('')}
         <datalist id="results">${RESULTS.map(x => `<option value="${x}">`).join('')}</datalist></div>
+      <div class="ed-sec"><div class="ed-h">Flags<small>every flag whose condition holds is shown with the result, e.g. QP-only · same names as the rules · empty condition means always</small><span class="sp"></span><button class="ghost-btn sm" data-add="flags"><sl-icon name="plus-lg"></sl-icon>Flag</button></div>
+        ${flags.map((f, i) => `<div class="ed-row"><sl-icon name="flag" class="dim"></sl-icon><span class="dim" style="font-size:12px">if</span>${inp(`flags.${i}.if`, 'expr', 'always (leave empty)', 'data-mono')}<span class="dim" style="font-size:12px">flag</span>
+          ${inp(`flags.${i}.flag`, '', 'e.g. QP-only', 'style="max-width:260px"')}${rowBtns('flags', i, flags.length)}</div>`).join('')}</div>
+      <div class="ed-sec"><div class="ed-h">Analyst checks<small>yes/no questions only the analyst answers on each screen · a no fails the gate</small><span class="sp"></span><button class="ghost-btn sm" data-add="checks"><sl-icon name="plus-lg"></sl-icon>Check</button></div>
+        ${checks.map((k, i) => `<div class="ed-row">${inp(`checks.${i}.id`, '', 'check_id', 'style="max-width:170px" data-mono')}${inp(`checks.${i}.q`, '', 'Can the position be custodied?')}${rowBtns('checks', i, checks.length)}</div>`).join('')}</div>
       <div class="ed-sec"><div class="ed-h">Analyst review</div><div class="ed-grid">
         <label>Review below confidence<small>a decisive answer under this goes to an analyst</small>${inp('review_if.min_confidence', 'num', '0.75', 'type="number" step="0.05" min="0" max="1"')}</label>
         <label>Decisive questions<small>none ticked means all questions</small><span style="display:flex;gap:12px;flex-wrap:wrap">${qs.filter(q => q.id).map(q => `<label class="ed-inline"><input type="checkbox" class="fi-cb" data-dec="${esc(q.id)}" ${(g.review_if?.decisive || []).includes(q.id) ? 'checked' : ''}>${esc(q.id)}</label>`).join('') || '<span class="dim">add questions first</span>'}</span></label></div></div>`}`;
@@ -282,6 +303,8 @@ async function editor(file, parsed, text, done) {
   body.addEventListener('click', e => {
     const add = e.target.closest('[data-add]')?.dataset.add, mv = e.target.closest('[data-mv]'), rm = e.target.closest('[data-rm]');
     if (add === 'fields') (g.extractor ||= {}).fields = [...(g.extractor.fields || []), { name: '', description: '' }];
+    if (add === 'checks') g.checks = [...(g.checks || []), { id: '', q: '' }];
+    if (add === 'flags') g.flags = [...(g.flags || []), { if: '', flag: '' }];
     if (add === 'questions') g.questions = [...(g.questions || []), { id: '', type: 'bool', q: '' }];
     if (add === 'derive') { const r = g.derive || []; const last = r.at(-1); g.derive = last && last.if == null ? [...r.slice(0, -1), { if: '', then: 'Incomplete' }, last] : [...r, { if: '', then: 'Pass' }]; }
     if (mv) { const arr = get(g, mv.dataset.mv), i = +mv.dataset.i, j = i + +mv.dataset.d; [arr[i], arr[j]] = [arr[j], arr[i]]; }
@@ -332,10 +355,13 @@ function clean(g) {
     if (ex.sources) { for (const k of Object.keys(ex.sources)) if (Array.isArray(ex.sources[k]) && !ex.sources[k].length) delete ex.sources[k]; if (!Object.keys(ex.sources).length) delete ex.sources; }
     if (Array.isArray(ex.keywords) && !ex.keywords.length) delete ex.keywords;
     if (ex.rules === '') delete ex.rules;
-    (ex.fields || []).forEach(f => { if (!f.recurring) delete f.recurring; if (f.description === '') delete f.description; });
+    (ex.fields || []).forEach(f => { if (!f.recurring) delete f.recurring; if (f.description === '') delete f.description; if (!f.ask) delete f.ask; });
   }
   (o.derive || []).forEach(r => { if (r.if === '' || r.if == null) delete r.if; });
+  (o.flags || []).forEach(f => { if (f.if === '' || f.if == null) delete f.if; });
+  if (Array.isArray(o.flags) && !o.flags.length) delete o.flags;
+  if (Array.isArray(o.checks) && !o.checks.length) delete o.checks;
   if (o.review_if) { if (o.review_if.min_confidence == null) delete o.review_if.min_confidence; if (!Object.keys(o.review_if).length) delete o.review_if; }
-  if (o.static_result) { delete o.extractor; delete o.questions; delete o.derive; delete o.review_if; }
+  if (o.static_result) { delete o.extractor; delete o.questions; delete o.derive; delete o.review_if; delete o.flags; delete o.checks; }
   return o;
 }

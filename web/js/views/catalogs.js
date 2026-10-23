@@ -27,7 +27,7 @@ export async function render(el) {
     const list = funds.filter(f => !t || f.name.toLowerCase().includes(t)).sort((a, b) => (b.catalog?.pages ?? -1) - (a.catalog?.pages ?? -1) || a.name.localeCompare(b.name));
     $('#cg', el).innerHTML = list.map(f => {
         const s = splitName(f.name), c = f.catalog;
-        return `<div class="cat-card" data-id="${esc(f.id)}"><div><div class="nm">${esc(s.manager)}</div><div class="mg">${esc(s.strategy || f.pipeline?.Strategy || '')}</div></div>
+        return `<div class="cat-card" data-id="${esc(f.id)}"><div><div class="nm">${esc(s.manager)}</div><div class="mg">${esc(s.strategy || '')}</div></div>
           ${c ? `<div class="nums"><div><b>${n(c.pages)}</b>pages</div><div><b>${c.files}</b>files</div><div><b>${n(c.core_pages)}</b>core</div><div><b>${c.sections ?? 0}</b>sections</div></div>
             <div class="track" style="display:flex;gap:2px;height:8px;border-radius:3px;overflow:hidden">${TIERS.filter(t => c.by_tier[t]).map(t => `<span style="flex:${c.by_tier[t].pages};background:${TIER_COL[t]}" data-tip="<b>${t}</b> · ${c.by_tier[t].files} files · ${n(c.by_tier[t].pages)} pages"></span>`).join('')}${c.exact_duplicates.pages + c.superseded.pages ? `<span style="flex:${c.exact_duplicates.pages + c.superseded.pages};background:var(--s4)" data-tip="Set aside · ${c.exact_duplicates.pages + c.superseded.pages} pages"></span>` : ''}</div>`
             : `<div style="display:flex;align-items:center;gap:10px"><span class="dim" style="font-size:12.5px">Not catalogued yet</span><span class="sp"></span><button class="ghost-btn sm" data-build="${esc(f.id)}"><sl-icon name="hammer"></sl-icon>Build</button></div>`}</div>`;

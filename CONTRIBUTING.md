@@ -63,15 +63,29 @@ policies, so Supabase's public Data API sees nothing; the app connects to Postgr
   checks the live project has exactly `main`'s migrations and no schema changes made outside them.
 - The pre-database files (`runs/`, `catalog/`) can be imported once with
   `uv run python scripts/import_local_state.py --yes` (dry run without `--yes`).
+- Pipeline statuses and owners from the old `PIPELINE.md` are imported once with
+  `uv run python scripts/import_pipeline_md.py <PIPELINE.md> <data-root> --yes` (dry run without `--yes`).
+  After that the console reads no Markdown from the Drive; statuses move only in the console, by the CIO.
 
-## Deployment (Vercel), planned
+## Deployment (Vercel)
 
-Not deployable yet: `server.py` is a long-running local process that reads data rooms from disk.
-Runs, catalogs and configuration are already in Postgres; moving to Vercel still means serverless API
-routes and data rooms in Supabase Storage. What is already in place:
+`scripts/deploy-vercel.sh` walks through the first deployment step by step (and re-runs safely). How the
+deployed console works:
 
-- `.github/workflows/preview-smoke.yml` runs the `@smoke` recipes against every Vercel preview
-  deployment as soon as Vercel's GitHub integration is connected (`E2E_BASE_URL`).
-- For protected previews, add a Vercel "Protection Bypass for Automation" secret as the repo secret
-  `VERCEL_AUTOMATION_BYPASS_SECRET`.
+- **One function.** Vercel's Python runtime loads `server:app` (WSGI; `[tool.vercel]` in `pyproject.toml`)
+  and routes every request to it, static files included. `vercel.json` sets a 300-second limit and keeps
+  tests and tooling out of the bundle. The local server runs the very same handler.
+- **No memory between requests.** A screen is queued, then run inside the request that claims it
+  (`POST /api/screen/<job>/run`), writing its steps to `screen_jobs`; the browser polls the job. The agent
+  monitor's log is `console_events`.
+- **No disk.** With `RWP_DATA_SOURCE=hosted`, rooms, page text and the file list come from Postgres and
+  files from the private Storage bucket `fund-files`, through one-hour signed links.
+  `scripts/upload_data_root.py <data-root> --yes` fills both (only new or changed files on re-runs) and
+  builds the catalogs, which the hosted console cannot. Add `--db-only` to try hosted mode locally.
+- **A shared password.** With `SITE_PASSWORD` set, every page and API call needs a session from `/login`.
+- **Environment** (Production and Preview): `DATABASE_URL`, `ANTHROPIC_API_KEY`, `JEV_API_KEY`,
+  `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SITE_PASSWORD`, `RWP_DATA_SOURCE=hosted`. The transaction
+  pooler (port 6543) works too; prepared statements are turned off for it.
+- `.github/workflows/preview-smoke.yml` runs the `@smoke` recipes against every preview, signed in with the
+  repo secret `E2E_SITE_PASSWORD` and, for protected previews, `VERCEL_AUTOMATION_BYPASS_SECRET`.
 - Keep secrets in Vercel's and GitHub's secret stores, never in the repo; gitleaks runs on every commit.

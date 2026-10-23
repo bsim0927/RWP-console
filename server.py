@@ -1,33 +1,51 @@
 #!/usr/bin/env python3
-"""Local analyst console. [PORT=8765] python3 server.py [data-root] -> http://127.0.0.1:8765"""
+"""The analyst console.
 
-import collections
+    [PORT=8765] python3 server.py [data-root]     # local, at http://127.0.0.1:8765
+
+Deployed, Vercel imports `app` (WSGI) from this module and the data root comes from RWP_DATA_ROOT. Both paths
+run the same handler. With SITE_PASSWORD set, every page and API call needs a session from /login.
+"""
+
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
 import re
 import sys
-import threading
 import time
-import uuid
+from datetime import date
+from email.message import Message
+from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sg import gate_store, monitor, policy_store, store  # noqa: E402
+from sg import (  # noqa: E402
+    clock,
+    datasource,
+    disposition,
+    fund_status,
+    gate_store,
+    jobs,
+    monitor,
+    note,
+    policy_store,
+    review,
+    store,
+)
 from sg.catalog import build as build_catalog  # noqa: E402
 from sg.pipeline import ROOT, Tracker, load_gates, run  # noqa: E402
 
-JOBS: dict[str, dict] = {}
-LOG: collections.deque[dict] = collections.deque(maxlen=1000)  # in-memory event log, newest last
 WEB = ROOT / "web"
 
-DATA_ROOT = Path(
-    sys.argv[1] if len(sys.argv) > 1 else os.environ.get("RWP_DATA_ROOT", str(Path.home() / "Desktop/RWP"))
-).resolve()
+# The command line sets it locally (see __main__); an importer such as Vercel's runtime has other arguments.
+DATA_ROOT = Path(os.environ.get("RWP_DATA_ROOT", str(Path.home() / "Desktop/RWP-funds"))).resolve()
 slug = lambda n: re.sub(r"[^\w.-]+", "_", n)
 mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("text/markdown", ".md")
@@ -38,15 +56,58 @@ TEXT_EXT = (".md", ".csv", ".json", ".yaml", ".yml", ".txt", ".jsonl")
 
 
 def log(kind, msg, level="info", **extra):
-    LOG.append({"t": time.time(), "kind": kind, "level": level, "msg": msg, **extra})
+    """An event for the agent monitor. Logging never breaks a request: if the database is unreachable,
+    the event goes to stderr instead."""
+    try:
+        jobs.log(kind, msg, level, **extra)
+    except Exception as e:
+        print(f"[{level}] {kind}: {msg} (not logged: {type(e).__name__})", file=sys.stderr)
+
+
+# ---------- the shared password ----------
+# A session cookie is an expiry signed with a key derived from SITE_PASSWORD, so changing the password signs
+# everyone out. Unset, the console is open: local use and the test suites.
+
+SESSION_COOKIE, SESSION_DAYS = "rwp_session", 30
+
+
+def session_key():
+    pw = os.environ.get("SITE_PASSWORD", "")
+    return hmac.new(pw.encode(), b"rwp-console session", hashlib.sha256).digest() if pw else None
+
+
+def session_value(now=None):
+    exp = str(int((now or time.time()) + SESSION_DAYS * 86400))
+    return f"{exp}.{hmac.new(session_key() or b'', exp.encode(), hashlib.sha256).hexdigest()}"
+
+
+def valid_session(value, now=None):
+    key = session_key()
+    exp, _, sig = (value or "").partition(".")
+    if not key or not exp.isdigit():
+        return False
+    good = hmac.new(key, exp.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(sig, good) and int(exp) > (now or time.time())
+
+
+# ---------- the fund data ----------
+# A data root on disk, or the database and Storage when hosted (sg/datasource.py, chosen by RWP_DATA_SOURCE).
+# Folder names inside a fund are kept as they are and mean nothing to the console.
+
+_SOURCES: dict = {}
+
+
+def data():
+    """The data source, one per data root, so a local source keeps its page cache between requests."""
+    key = (os.environ.get("RWP_DATA_SOURCE", "local"), DATA_ROOT)
+    if key not in _SOURCES:
+        _SOURCES[key] = datasource.source(DATA_ROOT)
+    return _SOURCES[key]
 
 
 def discover():
-    rooms = {}
-    for idx in DATA_ROOT.rglob("_index/pages.jsonl"):
-        folder = idx.parent.parent
-        rooms[slug(folder.name)] = folder
-    return rooms
+    """{room id: Room} for every indexed data room."""
+    return data().rooms()
 
 
 def inside(base, p):
@@ -56,170 +117,70 @@ def inside(base, p):
         return False
 
 
-# ---------- one file tree over the Drive download parts ----------
-# A large Drive download arrives as RWP-<stamp>-1-001, -002, ... each holding part of the same RWP/ tree.
-# The Files view lays the parts over each other so the analyst sees one RWP/ folder. Nothing on disk moves.
+# ---------- where each fund stands ----------
+# Statuses live in the database and move only by the CIO's hand (sg/fund_status.py). The last and next action
+# come from the screen itself, so they are never stale and nobody types them.
 
-DRIVE_PART = re.compile(r".+-\d{8}T\d{6}Z-\d+-\d{3}$")
-
-
-def layers():
-    parts = [p for p in sorted(DATA_ROOT.iterdir()) if p.is_dir() and DRIVE_PART.match(p.name)]
-    if not parts:
-        return [DATA_ROOT]
-    out = []
-    for p in parts:
-        kids = [c for c in p.iterdir() if c.is_dir() and not c.name.startswith(".")]
-        out.append(kids[0] if len(kids) == 1 and not any(c.is_file() for c in p.iterdir()) else p)
-    return out
+STATE_WORDS = {
+    "draft": "draft",
+    "confirmed": "confirmed",
+    "awaiting_signoff": "awaiting CIO sign-off",
+    "signed_off": "signed off",
+}
 
 
-def to_virtual(rel):
-    """Real path (relative to the data root) -> path inside the merged tree."""
-    p = (DATA_ROOT / rel).resolve()
-    for layer in layers():
-        if p.is_relative_to(layer.resolve()):
-            v = p.relative_to(layer.resolve())
-            return "" if str(v) == "." else str(v)
-    return rel
+def fund_actions(latest):
+    """{"last", "next"} for a fund from its newest screen (disposition.latest_by_fund), or Nones."""
+    if not latest:
+        return {"last": None, "next": "Screen the data room"}
+    d, r = latest["decision"], latest["run"]
+    last = f"Screened {r[:4]}-{r[4:6]}-{r[6:8]}: {d['disposition'].split(' (')[0]} ({STATE_WORDS[d['state']]})"
+    if d["blockers"]:
+        nxt = "Analyst to " + "; ".join(d["blockers"])
+    elif d["state"] == "awaiting_signoff":
+        nxt = "CIO sign-off"
+    elif d["state"] == "draft":
+        nxt = "Confirm the disposition"
+    elif d["disposition"].startswith("Under review"):
+        nxt = "Manager to provide the requested documents"
+    else:
+        nxt = "CIO to update the status"
+    return {"last": last, "next": nxt}
 
 
-def real_candidates(v):
-    return [layer / v for layer in layers() if inside(layer, layer / v) and (layer / v).exists()]
+def screen_clock(intake, decided_on):
+    """The fund against its five-business-day clock. The screen is done once a disposition is confirmed
+    (or, for "not covered", signed off) on or after the filing date."""
+    filed = intake.get("filed_on")
+    if not filed:
+        return None
+    done = next((d for d in decided_on if d >= filed), None)
+    return clock.status(filed, done, date.today())
 
 
-def merged_listing(v):
-    entries: dict[str, dict] = {}
-    for d in real_candidates(v):
-        if not d.is_dir():
-            continue
-        for c in d.iterdir():
-            if c.name.startswith(".") or c.name == "_index":
-                continue
-            st = c.stat()
-            e = entries.get(c.name)
-            room = c.is_dir() and (c / "_index" / "pages.jsonl").exists()
-            if e:  # the same folder in more than one part
-                e["parts"] += 1
-                e["mtime"] = max(e["mtime"], st.st_mtime)
-                e["room"] = e["room"] or room
-                continue
-            entries[c.name] = {
-                "name": c.name,
-                "dir": c.is_dir(),
-                "size": st.st_size,
-                "mtime": st.st_mtime,
-                "path": f"{v}/{c.name}" if v else c.name,
-                "real": str(c.relative_to(DATA_ROOT)),
-                "room": room,
-                "parts": 1,
+def with_review(summary, latest):
+    """A run summary after analyst review: each gate's reviewed result (the pipeline's stays as pipeline_result),
+    and the proposed disposition with its confirmation state."""
+    if not summary or not latest or latest["run"] != summary["run"]:
+        return summary
+    gates = {}
+    for g, x in summary["gates"].items():
+        e = latest["gates"].get(g)
+        gates[g] = (
+            x
+            if e is None
+            else {
+                **x,
+                "result": e["result"],
+                "pipeline_result": e["pipeline_result"],
+                "reviewed": e["reviewed"],
+                "review": e["needs_review"],
+                "pending_checks": e["pending_checks"],
             }
-    return sorted(entries.values(), key=lambda e: (not e["dir"], e["name"].lower()))
-
-
-# ---------- pipeline (tables in PIPELINE.md, read-only) ----------
-
-
-def parse_pipeline():
-    src = next(iter(sorted(DATA_ROOT.rglob("PIPELINE.md"))), None)
-    if not src:
-        return {"source": None, "updated": None, "sections": []}
-    text = src.read_text(errors="replace")
-    sections: list[dict] = []
-    cur: dict | None = None
-    header: list[str] | None = None
-    for line in text.splitlines():
-        if line.startswith("## "):
-            cur, header = {"title": line[3:].strip(), "rows": []}, None
-            sections.append(cur)
-        elif line.startswith("|") and cur is not None:
-            cells = [c.strip().replace("**", "") for c in line.strip().strip("|").split("|")]
-            if header is None:
-                header = cells
-            elif not all(set(c) <= set("-: ") for c in cells):
-                cur["rows"].append(dict(zip(header, cells, strict=False)))
-        else:
-            header = None
-    upd = re.search(r"Last updated:\s*(\S+)", text)
-    return {
-        "source": str(src.relative_to(DATA_ROOT)),
-        "updated": upd and upd.group(1),
-        "sections": [s for s in sections if s["rows"]],
-    }
-
-
-def match_pipeline(name, rows):
-    """Folder 'Manager - Strategy' -> the pipeline row for that manager with the most strategy words in common."""
-    mgr, _, strat = name.partition(" - ")
-    words = lambda s: set(re.findall(r"[a-z0-9]+", s.lower()))
-    best, score = None, -1
-    for r in rows:
-        m = words(r.get("Manager", ""))
-        if m and m <= words(mgr) | words(name):
-            s = len(words(strat) & words(r.get("Strategy", "")))
-            if s > score:
-                best, score = r, s
-    return best
-
-
-# ---------- full-text search over indexed pages (lazy, mtime-cached) ----------
-
-_PAGES: dict[Path, tuple[float, list[dict]]] = {}
-
-
-def room_pages(folder):
-    idx = folder / "_index" / "pages.jsonl"
-    m = idx.stat().st_mtime
-    hit = _PAGES.get(idx)
-    if not hit or hit[0] != m:
-        hit = (m, [json.loads(line) for line in idx.open()])
-        _PAGES[idx] = hit
-    return hit[1]
-
-
-def search(q, rooms, limit=80):
-    terms = [t for t in re.findall(r"\w+", q.lower()) if len(t) > 1]
-    if not terms:
-        return []
-    named, out = [], []
-    for fid, folder in rooms.items():
-        pages = room_pages(folder)
-        # Evidence cites a file by name or path, words that rarely appear on its pages, so match those too.
-        firsts: dict[str, dict] = {}
-        for p in pages:
-            firsts.setdefault(p["file"], p)
-        for rel, p in firsts.items():
-            if all(term in rel.lower() for term in terms):
-                named.append(
-                    {
-                        "fund": fid,
-                        "room": folder.name,
-                        "file": rel,
-                        "page": p["page"],
-                        "path": str((folder / rel).relative_to(DATA_ROOT)),
-                        "snippet": re.sub(r"\s+", " ", p["text"][:320]).strip(),
-                        "score": 0,
-                        "by_name": True,
-                    }
-                )
-        for p in pages:
-            t = p["text"].lower()
-            if all(term in t for term in terms):
-                i = t.find(terms[0])
-                snip = re.sub(r"\s+", " ", p["text"][max(0, i - 120) : i + 200]).strip()
-                out.append(
-                    {
-                        "fund": fid,
-                        "room": folder.name,
-                        "file": p["file"],
-                        "page": p["page"],
-                        "path": str((folder / p["file"]).relative_to(DATA_ROOT)),
-                        "snippet": snip,
-                        "score": sum(t.count(term) for term in terms),
-                    }
-                )
-    out.sort(key=lambda r: -r["score"])
-    return (named + out)[:limit]
+        )
+    d = latest["decision"]
+    decision = {k: d[k] for k in ("state", "needs_signoff", "confirmed", "signed_off", "blockers")}
+    return {**summary, "gates": gates, "flags": d["flags"], "disposition": d["disposition"], "decision": decision}
 
 
 # ---------- analytics over every logged run ----------
@@ -273,24 +234,64 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def signed_in(self):
+        if not session_key():
+            return True
+        morsel = SimpleCookie(self.headers.get("Cookie") or "").get(SESSION_COOKIE)
+        return morsel is not None and valid_session(morsel.value)
+
+    def guard(self):
+        """Run the sign-in pages, and turn away anyone without a session. True when the request may go on."""
+        path = urlparse(self.path).path
+        if path == "/login":
+            if self.command == "POST":
+                self.sign_in()
+            else:
+                self.send((WEB / "login.html").read_bytes(), "text/html; charset=utf-8")
+            return False
+        if path == "/logout":
+            self.send(b"", "text/plain", 303, {"Location": "/login", "Set-Cookie": self.cookie("", 0)})
+            return False
+        if self.signed_in():
+            return True
+        if path.startswith("/api/"):
+            self.send({"error": "sign in first"}, code=401)
+        else:
+            self.send(b"", "text/plain", 303, {"Location": "/login"})
+        return False
+
+    def sign_in(self):
+        raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
+        given = (parse_qs(raw).get("password") or [""])[0]
+        want = os.environ.get("SITE_PASSWORD", "")
+        if want and hmac.compare_digest(given.encode(), want.encode()):
+            log("auth", "signed in")
+            return self.send(
+                b"",
+                "text/plain",
+                303,
+                {"Location": "/", "Set-Cookie": self.cookie(session_value(), SESSION_DAYS * 86400)},
+            )
+        log("auth", "a sign-in failed", "warn")
+        time.sleep(1)  # slows guessing
+        self.send(b"", "text/plain", 303, {"Location": "/login?error=1"})
+
+    def cookie(self, value, max_age):
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        return f"{SESSION_COOKIE}={value}; Max-Age={max_age}; Path=/; HttpOnly; SameSite=Lax{secure}"
+
     def static(self, rel):
         p = WEB / rel
         if not inside(WEB, p) or not p.is_file():
             return self.send({"error": "not found"}, code=404)
         return self.send(p.read_bytes(), mimetypes.guess_type(p.name)[0] or "application/octet-stream")
 
-    def data_path(self, qs):
-        rel = qs.get("path", [""])[0].lstrip("/")
-        p = DATA_ROOT / rel
-        if inside(DATA_ROOT, p) and p.exists():
-            return p
-        hits = real_candidates(rel)  # a path in the merged tree
-        return hits[0] if hits else None
-
     def body(self):
         return json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
 
     def do_GET(self):
+        if not self.guard():
+            return
         t0, self._code = time.time(), 200
         try:
             self.route_get()
@@ -319,23 +320,26 @@ class H(BaseHTTPRequestHandler):
             return self.static("/".join(parts))
         rooms = discover()
         if parts == ["api", "funds"]:
-            pipe = [r for s in parse_pipeline()["sections"] for r in s["rows"]]
             out = []
             stamps, latest, catalogs = store.stamps_by_fund(), store.latest_summaries(), store.catalog_summaries()
-            for fid, folder in sorted(rooms.items()):
+            intakes, reviewed, decided = store.intakes(), disposition.latest_by_fund(), disposition.decided_on_by_fund()
+            statuses, material = fund_status.current(), store.latest_material()
+            for fid, room in sorted(rooms.items()):
                 rs = stamps.get(fid, [])
-                rel = folder.relative_to(DATA_ROOT)
+                intake = intakes.get(fid) or dict.fromkeys(store.INTAKE_FIELDS)
                 out.append(
                     {
                         "id": fid,
-                        "name": folder.name,
-                        "path": str(rel),
-                        "vpath": to_virtual(str(rel)),
-                        "stage": next((p for p in rel.parts if re.match(r"\d-", p)), None),
+                        "name": room.name,
+                        "path": room.path,
                         "runs": rs,
-                        "latest": latest.get(fid),
+                        "latest": with_review(latest.get(fid), reviewed.get(fid)),
                         "catalog": catalogs.get(fid),
-                        "pipeline": match_pipeline(folder.name, pipe),
+                        "status": statuses.get(fid) or fund_status.DEFAULT,
+                        "actions": fund_actions(reviewed.get(fid)),
+                        "material_on": material.get(fid),
+                        "intake": intake,
+                        "clock": screen_clock(intake, decided.get(fid, [])),
                     }
                 )
             return self.send(out)
@@ -343,27 +347,14 @@ class H(BaseHTTPRequestHandler):
             return self.send(store.summaries())
         if parts == ["api", "analytics"]:
             return self.send(analytics())
-        if parts == ["api", "pipeline"]:
-            return self.send(parse_pipeline())
+        if parts[:2] == ["api", "status"] and len(parts) == 3:
+            return self.send(fund_status.history(parts[2]))
         if parts == ["api", "agent"]:
             out = monitor.report()
-            out["jobs"] = [
-                {
-                    "id": k,
-                    "fund": j["fund"],
-                    "fund_id": j["fund_id"],
-                    "status": j["status"],
-                    "started": j["started"],
-                    "extractor": j["extractor"],
-                    "judge": j["judge"],
-                    "elapsed": round(time.time() - j["tr"].t0, 1) if j["status"] == "running" else j.get("seconds"),
-                    "run": j.get("run"),
-                    "error": j.get("error"),
-                    "steps": list(j["tr"].steps),
-                }
-                for k, j in JOBS.items()
-            ][::-1]
+            out["jobs"] = jobs.recent()
             return self.send(out)
+        if parts == ["api", "reviewers"]:
+            return self.send(review.reviewers())
         if parts == ["api", "policy", "history"]:
             return self.send(policy_store.history())
         if parts == ["api", "gates", "history"]:
@@ -381,95 +372,81 @@ class H(BaseHTTPRequestHandler):
                 }
             )
         if parts == ["api", "logs"]:
-            jobs = [
-                {
-                    "id": k,
-                    "fund": j["fund"],
-                    "fund_id": j["fund_id"],
-                    "status": j["status"],
-                    "started": j["started"],
-                    "extractor": j["extractor"],
-                    "judge": j["judge"],
-                    "elapsed": round(time.time() - j["tr"].t0, 1) if j["status"] == "running" else j.get("seconds"),
-                    "run": j.get("run"),
-                    "error": j.get("error"),
-                }
-                for k, j in JOBS.items()
-            ]
-            return self.send({"events": list(LOG), "jobs": jobs[::-1]})
+            recent = [{k: v for k, v in j.items() if k not in ("steps", "gates")} for j in jobs.recent()]
+            return self.send({"events": jobs.events(), "jobs": recent})
         if parts == ["api", "meta"]:
             return self.send(
                 {
-                    "data_root": str(DATA_ROOT),
+                    "password": bool(session_key()),
+                    "data_root": data().label,
                     "rooms": len(rooms),
-                    "running": sum(j["status"] == "running" for j in JOBS.values()),
+                    "running": sum(j["status"] == "running" for j in jobs.recent(20)),
                 }
             )
         if parts == ["api", "search"]:
             fund = qs.get("fund", [None])[0]
-            return self.send(search(qs.get("q", [""])[0], {fund: rooms[fund]} if fund in rooms else rooms))
+            return self.send(data().search(qs.get("q", [""])[0], only=fund if fund in rooms else None))
         if parts == ["api", "fs"]:
-            v = to_virtual(qs.get("path", [""])[0].strip("/"))
-            if v and not any(d.is_dir() for d in real_candidates(v)):
+            v = qs.get("path", [""])[0].strip("/")
+            entries = data().listing(v)
+            if entries is None:
                 return self.send({"error": "not a folder"}, code=404)
-            return self.send(
-                {
-                    "path": v,
-                    "root": layers()[0].name if len(layers()) > 1 else DATA_ROOT.name,
-                    "parts": len(layers()),
-                    "entries": merged_listing(v),
-                }
-            )
+            return self.send({"path": v, "root": DATA_ROOT.name, "entries": entries})
         if parts == ["api", "raw"]:
-            p = self.data_path(qs)
-            if p is None or not p.is_file():
+            path = qs.get("path", [""])[0]
+            found = data().file(path)
+            if found is None:
                 return self.send({"error": "not found"}, code=404)
-            ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-            if ctype.startswith("text/") or p.suffix.lower() in TEXT_EXT:
+            kind, where = found
+            if kind == "url":  # hosted: the browser fetches the file from Storage with a short-lived link
+                return self.send(b"", "text/plain", 302, {"Location": where})
+            ctype = mimetypes.guess_type(where.name)[0] or "application/octet-stream"
+            if ctype.startswith("text/") or where.suffix.lower() in TEXT_EXT:
                 ctype = "text/plain; charset=utf-8"
-            return self.send(p.read_bytes(), ctype, extra={"Content-Disposition": f'inline; filename="{slug(p.name)}"'})
+            return self.send(
+                where.read_bytes(), ctype, extra={"Content-Disposition": f'inline; filename="{slug(where.name)}"'}
+            )
         if parts == ["api", "filepages"]:
-            p = self.data_path(qs)
-            if p is None:
-                return self.send({"error": "not found"}, code=404)
-            for folder in rooms.values():
-                if inside(folder, p):
-                    rel = str(p.relative_to(folder))
-                    pages = [{"page": x["page"], "text": x["text"]} for x in room_pages(folder) if x["file"] == rel]
-                    return self.send({"room": folder.name, "pages": pages})
-            return self.send({"room": None, "pages": []})
+            path = qs.get("path", [""])[0].lstrip("/")
+            room = next((r for r in rooms.values() if path.startswith(r.path + "/")), None)
+            if room is None:
+                return self.send({"room": None, "pages": []})
+            rel = path[len(room.path) + 1 :]
+            pages = [{"page": x["page"], "text": x["text"]} for x in data().pages(room) if x["file"] == rel]
+            return self.send({"room": room.name, "pages": pages})
         if parts[:2] == ["api", "run"] and len(parts) == 4:
             fid, stamp = parts[2], parts[3]
             found = store.run(fid, stamp)
             if found is None:
                 return self.send({"error": "not found"}, code=404)
             room = rooms.get(fid)
-            return self.send({**found, "room_path": str(room.relative_to(DATA_ROOT)) if room else None})
-        if parts[:2] == ["api", "job"] and len(parts) == 3:
-            j = JOBS.get(parts[2])
-            if not j:
-                return self.send({"error": "unknown job"}, code=404)
             return self.send(
                 {
-                    "status": j["status"],
-                    "run": j.get("run"),
-                    "error": j.get("error"),
-                    "elapsed": round(time.time() - j["tr"].t0, 2),
-                    "gates": j["gates"],
-                    "steps": list(j["tr"].steps),
+                    **found,
+                    "review": review.for_run(fid, stamp),
+                    "decision": disposition.for_run(fid, stamp),
+                    "room_path": room.path if room else None,
                 }
             )
+        if parts[:2] == ["api", "note"] and len(parts) == 4:
+            return self.send(note.versions(parts[2], parts[3]))
+        if parts[:2] == ["api", "job"] and len(parts) == 3:
+            j = jobs.get(parts[2])
+            return self.send(j) if j else self.send({"error": "unknown job"}, code=404)
         if parts[:2] == ["api", "catalog"] and len(parts) == 3:
-            folder = rooms.get(parts[2])
-            if not folder:
+            room = rooms.get(parts[2])
+            if not room:
                 return self.send({"error": "unknown fund"}, code=404)
             hit = store.catalog(parts[2])
             if hit is None:
-                log("catalog", f"building catalog for {folder.name}")
+                folder = data().folder(room)
+                if folder is None:
+                    return self.send({"error": "no catalog yet; scripts/upload_data_root.py builds it"}, code=404)
+                log("catalog", f"building catalog for {room.name}")
                 build_catalog(folder)
                 hit = store.catalog(parts[2])
             summary, docs = hit
-            return self.send({"summary": summary, "docs": docs, "room_path": str(folder.relative_to(DATA_ROOT))})
+            return self.send({"summary": summary, "docs": docs, "room_path": room.path})
         if parts[:2] == ["api", "history"] and len(parts) == 3:
             return self.send(store.summaries(parts[2], newest_first=False))
         self.send({"error": "not found"}, code=404)
@@ -532,68 +509,177 @@ class H(BaseHTTPRequestHandler):
         self.send(out)
         return True
 
+    def intake_write(self):
+        parts = [unquote(p) for p in urlparse(self.path).path.split("/") if p]
+        if parts[:2] != ["api", "intake"] or len(parts) != 3:
+            return False
+        if parts[2] not in discover():
+            return self.send({"error": "unknown fund"}, code=404) or True
+        try:
+            out = store.save_intake(parts[2], self.body())
+        except ValueError as e:
+            return self.send({"error": str(e)}, code=400) or True
+        log("intake", f"saved intake for {parts[2]}: {json.dumps(out)[:200]}")
+        self.send(out)
+        return True
+
+    def review_write(self):
+        """Reviewers, gate reviews and manual-check answers. Each answer is a new row, never an edit."""
+        path = urlparse(self.path).path
+        parts = [unquote(p) for p in path.split("/") if p]
+        is_note = parts[:2] == ["api", "note"] and len(parts) == 4
+        if (
+            path not in ("/api/reviewers", "/api/review", "/api/check", "/api/disposition", "/api/status")
+            and not is_note
+        ):
+            return False
+        b = self.body()
+        try:
+            if is_note:
+                fid, stamp = parts[2], parts[3]
+                out = (
+                    note.draft(fid, stamp)
+                    if b.get("draft")
+                    else note.edit(fid, stamp, b.get("body"), b.get("reviewer"))
+                )
+            elif path == "/api/reviewers":
+                out = review.save_reviewer(b)
+            elif path == "/api/status":
+                if b.get("fund") not in discover():
+                    raise review.ReviewError("unknown fund")
+                out = fund_status.set_status(b.get("fund"), b.get("status"), b.get("reviewer"), b.get("note"))
+            elif path == "/api/disposition":
+                out = disposition.confirm(b.get("fund"), b.get("run"), b.get("reviewer"), b.get("reason"))
+            elif path == "/api/review":
+                out = review.add_review(
+                    b.get("fund"), b.get("run"), b.get("gate"), b.get("reviewer"), b.get("verdict"),
+                    b.get("reason"), b.get("result"), b.get("document"), b.get("page"),
+                )  # fmt: skip
+            else:
+                out = review.add_check(
+                    b.get("fund"), b.get("run"), b.get("gate"), b.get("check"), b.get("ok"), b.get("reviewer"),
+                    b.get("note"),
+                )  # fmt: skip
+        except review.ReviewError as e:
+            return self.send({"error": str(e)}, code=400) or True
+        log("review", f"POST {path[5:]}: {json.dumps(b)[:200]}")
+        self.send(out)
+        return True
+
     def do_PUT(self):
-        if not (self.policy_write("PUT") or self.gate_write("PUT")):
+        if not self.guard():
+            return
+        if not (self.policy_write("PUT") or self.gate_write("PUT") or self.intake_write()):
             self.send({"error": "not found"}, code=404)
 
     def do_DELETE(self):
+        if not self.guard():
+            return
         if not self.gate_write("DELETE"):
             self.send({"error": "not found"}, code=404)
 
     def do_POST(self):
-        if self.policy_write("POST") or self.gate_write("POST"):
+        if not self.guard():
+            return
+        if self.policy_write("POST") or self.gate_write("POST") or self.review_write():
             return
         parts = [p for p in urlparse(self.path).path.split("/") if p]
         if parts[:2] == ["api", "catalog"] and len(parts) == 4 and parts[3] == "rebuild":
-            folder = discover().get(parts[2])
-            if not folder:
+            room = discover().get(parts[2])
+            if not room:
                 return self.send({"error": "unknown fund"}, code=404)
+            folder = data().folder(room)
+            if folder is None:
+                return self.send({"error": "catalogs are rebuilt by scripts/upload_data_root.py here"}, code=409)
             try:
                 build_catalog(folder)
             except Exception as e:
-                log("catalog", f"rebuild failed for {folder.name}: {e}", "error")
+                log("catalog", f"rebuild failed for {room.name}: {e}", "error")
                 return self.send({"error": f"{type(e).__name__}: {e}"}, code=500)
-            log("catalog", f"rebuilt catalog for {folder.name}")
+            log("catalog", f"rebuilt catalog for {room.name}")
             return self.send({"ok": True})
-        if urlparse(self.path).path != "/api/screen":
-            return self.send({"error": "not found"}, code=404)
+        if parts == ["api", "screen"]:
+            return self.queue_screen()
+        if parts[:2] == ["api", "screen"] and len(parts) == 4 and parts[3] == "run":
+            return self.run_screen(parts[2])
+        return self.send({"error": "not found"}, code=404)
+
+    def queue_screen(self):
+        """Ask for a screen: a queued job the browser then runs with POST /api/screen/<job>/run."""
         body = self.body()
-        folder = discover().get(body.get("fund"))
-        if not folder:
+        room = discover().get(body.get("fund"))
+        if not room:
             return self.send({"error": "unknown fund"}, code=404)
-        tr = Tracker()
         ex, jd = body.get("extractor", "claude"), body.get("judge", "jev")
-        job = {
-            "status": "running",
-            "tr": tr,
-            "gates": [g["id"] for g in load_gates()],
-            "fund": folder.name,
-            "fund_id": body["fund"],
-            "extractor": ex,
-            "judge": jd,
-            "started": time.time(),
-        }
-        jid = uuid.uuid4().hex[:10]
-        JOBS[jid] = job
-        log("job", f"screen started: {folder.name} (extractor {ex}, judge {jd})", job=jid)
-
-        def work():
-            try:
-                _, summary, _ = run(folder, ex, jd, tracker=tr)
-                job.update(status="done", run=summary["run"], seconds=summary.get("seconds"))
-                log("job", f"screen finished: {folder.name}: {summary['disposition']}", job=jid, run=summary["run"])
-            except (SystemExit, Exception) as e:  # missing key, API errors
-                job.update(status="error", error=str(e) or type(e).__name__, seconds=round(time.time() - tr.t0, 1))
-                log("job", f"screen failed: {folder.name}: {job['error']}", "error", job=jid)
-
-        threading.Thread(target=work, daemon=True).start()
+        jid = jobs.create(body["fund"], room.name, ex, jd, [g["id"] for g in load_gates()])
+        log("job", f"screen queued: {room.name} (extractor {ex}, judge {jd})", job=jid)
         self.send({"job": jid})
+
+    def run_screen(self, jid):
+        """Run a queued screen inside this request (no background thread: a serverless function stops when
+        its response is sent), writing each step to the job as it goes. The browser polls the job."""
+        job = jobs.claim(jid)
+        if not job:
+            return self.send({"error": "unknown job, or already started"}, code=409)
+        room = discover().get(job["fund_id"])
+        tr = Tracker(on_change=lambda steps: jobs.progress(jid, steps))
+        try:
+            if not room:
+                raise LookupError(f"no data room {job['fund_id']}")
+            _, summary, _ = run(data().data_room(room), job["extractor"], job["judge"], tracker=tr)
+        except (SystemExit, Exception) as e:  # missing key, API errors
+            error = str(e) or type(e).__name__
+            jobs.finish(jid, tr.steps, error=error)
+            log("job", f"screen failed: {job['fund_id']}: {error}", "error", job=jid)
+            return self.send({"status": "error", "error": error})
+        jobs.finish(jid, tr.steps, run_stamp=summary["run"])
+        log("job", f"screen finished: {summary['fund']}: {summary['disposition']}", job=jid, run=summary["run"])
+        self.send({"status": "done", "run": summary["run"]})
 
     def log_message(self, *a):
         pass
 
 
+class WsgiRequest(H):
+    """One WSGI request through the same handler, with no socket: how Vercel runs the console. Everything
+    the handler answers goes through send(), which this captures instead of writing to a connection."""
+
+    def __init__(self, environ):  # deliberately not BaseHTTPRequestHandler's, which serves a socket
+        self.command = environ["REQUEST_METHOD"]
+        path = (environ.get("PATH_INFO") or "/").encode("latin-1").decode("utf-8", "replace")  # PEP 3333
+        qs = environ.get("QUERY_STRING")
+        self.path = quote(path) + (f"?{qs}" if qs else "")
+        self.headers = Message()
+        for k, v in environ.items():
+            if k.startswith("HTTP_"):
+                self.headers[k[5:].replace("_", "-").title()] = v
+        for k in ("CONTENT_LENGTH", "CONTENT_TYPE"):
+            if environ.get(k):
+                self.headers[k.replace("_", "-").title()] = environ[k]
+        self.rfile = environ["wsgi.input"]
+        self.reply: tuple[int, str, bytes, dict] = (500, "application/json", b'{"error": "no response"}', {})
+
+    def send(self, body, ctype="application/json", code=200, extra=None):
+        self._code = code
+        self.reply = (code, ctype, body if isinstance(body, bytes) else json.dumps(body).encode(), extra or {})
+
+
+def app(environ, start_response):
+    req = WsgiRequest(environ)
+    handler = getattr(req, f"do_{req.command}", None)
+    if handler is None:
+        req.send({"error": "method not allowed"}, code=405)
+    else:
+        handler()
+    code, ctype, data, extra = req.reply
+    headers = [("Content-Type", ctype), ("Content-Length", str(len(data))), ("Cache-Control", "no-store")]
+    start_response(f"{code} {HTTPStatus(code).phrase}", headers + list(extra.items()))
+    return [data]
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        DATA_ROOT = Path(sys.argv[1]).resolve()
     log("server", f"started, data root {DATA_ROOT}")
     port = int(os.environ.get("PORT", 8765))
     print(f"http://127.0.0.1:{port}")

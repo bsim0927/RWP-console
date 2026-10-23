@@ -1,18 +1,18 @@
-// Recipe: the screening queue reflects the runs on disk (fixture: 2 screened funds needing analyst
-// review, 1 unscreened).
+// Recipe: the screening queue reflects the runs on disk (fixture: 3 screened funds, 2 of them needing
+// analyst review, 1 unscreened).
 import { test, expect, open, FUNDS } from './fixtures.js';
 
 test('lists every indexed data room with its latest disposition', async ({ page }) => {
   await open(page, '#/screening', 'Screening');
   const rows = page.locator('#tbl tr[data-id]');
-  await expect(rows).toHaveCount(3);
+  await expect(rows).toHaveCount(4);
   await expect(page.locator(`#tbl tr[data-id="${FUNDS.bluefield.id}"]`)).toContainText('Not screened');
   await expect(page.locator(`#tbl tr[data-id="${FUNDS.northwind.id}"]`)).toContainText('Under review');
 });
 
 test('filters narrow the table and their counts agree with it', async ({ page }) => {
   await open(page, '#/screening', 'Screening');
-  for (const [f, expected] of [['unscreened', 1], ['screened', 2], ['review', 2], ['all', 3]]) {
+  for (const [f, expected] of [['unscreened', 1], ['screened', 3], ['review', 2], ['late', 1], ['all', 4]]) {
     const btn = page.locator(`#seg button[data-f="${f}"]`);
     await btn.click();
     await expect(btn.locator('.c')).toHaveText(String(expected));

@@ -1,7 +1,7 @@
 // Unit tests for the pure helpers in web/js/lib.js: formatting, status vocabulary, escaping, markdown.
 import { describe, expect, it } from 'vitest';
 import {
-  bytes, dispNote, dispShort, dispTone, esc, extOf, gateName, markdown, mergedPath, n, pct,
+  bytes, dispNote, dispShort, dispTone, esc, extOf, gateName, markdown, n, pct,
   rawUrl, resultTone, sortGates, splitName, stampDate, initials,
 } from '../../web/js/lib.js';
 
@@ -77,10 +77,6 @@ describe('status vocabulary', () => {
 });
 
 describe('paths', () => {
-  it('mergedPath strips the Drive download part prefix', () => {
-    expect(mergedPath('RWP-20261006T224806Z-1-001/RWP/1-Intake/a.pdf')).toBe('1-Intake/a.pdf');
-    expect(mergedPath('1-Intake/a.pdf')).toBe('1-Intake/a.pdf');
-  });
   it('rawUrl encodes the path and adds a page anchor', () => {
     expect(rawUrl('a b/c&d.pdf', 3)).toBe('/api/raw?path=a+b%2Fc%26d.pdf#page=3');
     expect(rawUrl('x.pdf')).toBe('/api/raw?path=x.pdf');
@@ -89,6 +85,12 @@ describe('paths', () => {
 });
 
 describe('markdown', () => {
+  it('renders numbered lists, as the screen note request list uses', () => {
+    const html = markdown('Asks:\n\n1. The fee schedule\n2. The valuation policy\n\nDone.');
+    expect(html).toContain('<ol><li>The fee schedule</li><li>The valuation policy</li></ol>');
+    expect(html).toContain('<p>Done.</p>');
+  });
+
   it('renders headings, emphasis, code and lists', () => {
     const html = markdown('# Title\n\nSome **bold** and *em* and `code`.\n\n- one\n- two');
     expect(html).toContain('<h1>Title</h1>');
