@@ -72,9 +72,10 @@ policies, so Supabase's public Data API sees nothing; the app connects to Postgr
 `scripts/deploy-vercel.sh` walks through the first deployment step by step (and re-runs safely). How the
 deployed console works:
 
-- **One function.** Vercel's Python runtime loads `server:app` (WSGI; `[tool.vercel]` in `pyproject.toml`)
-  and routes every request to it, static files included. `vercel.json` sets a 300-second limit and keeps
-  tests and tooling out of the bundle. The local server runs the very same handler.
+- **One function.** `api/index.py` re-exports the WSGI app from `server.py`, and `vercel.json` rewrites
+  every path to it, static files included. Vercel only accepts `functions` keys under `api/`, so the
+  entrypoint cannot be `server.py` itself. `vercel.json` sets a 300-second limit and keeps tests and tooling
+  out of the bundle. The local server runs the very same handler.
 - **No memory between requests.** A screen is queued, then run inside the request that claims it
   (`POST /api/screen/<job>/run`), writing its steps to `screen_jobs`; the browser polls the job. The agent
   monitor's log is `console_events`.

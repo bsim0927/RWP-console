@@ -3,7 +3,7 @@
 
     [PORT=8765] python3 server.py [data-root]     # local, at http://127.0.0.1:8765
 
-Deployed, Vercel imports `app` (WSGI) from this module and the data root comes from RWP_DATA_ROOT. Both paths
+Deployed, Vercel imports `app` (WSGI) from this module through api/index.py and the data root comes from RWP_DATA_ROOT. Both paths
 run the same handler. With SITE_PASSWORD set, every page and API call needs a session from /login.
 """
 
