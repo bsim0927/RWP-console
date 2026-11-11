@@ -22,6 +22,10 @@ dev = [
 [tool.uv]
 package = false
 
+# Vercel's Python runtime loads this WSGI app; every request goes to it (vercel.json sets its limits).
+[tool.vercel]
+entrypoint = "server:app"
+
 # ---------- ruff ----------
 [tool.ruff]
 line-length = 120

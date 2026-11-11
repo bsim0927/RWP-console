@@ -12,6 +12,7 @@ freely: nothing outside the workspace and the rwp_e2e database is touched.
 
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -21,14 +22,14 @@ from urllib.parse import urlsplit, urlunsplit
 import psycopg
 
 REPO = Path(__file__).resolve().parents[2]
+slug = lambda n: re.sub(r"[^\w.-]+", "_", n)  # a data room's fund id, as the console makes it
 
 # ---------- synthetic data rooms ----------
-# Each room: folder name, stage folder, and pages {file: [page text, ...]}. Quotes used by the
+# Each room: folder name and pages {file: [page text, ...]}. Rooms sit directly under the data root. Quotes used by the
 # scripted extractor below must appear verbatim on the cited page, or verify will reject them.
 
 ROOMS: dict[str, dict] = {
     "Northwind Capital - Private Credit Fund I": {
-        "stage": "1-Intake",
         "files": {
             "01 Offering/Northwind Private Credit Fund I - PPM.pdf": [
                 "NORTHWIND PRIVATE CREDIT FUND I\nPrivate Placement Memorandum\nTable of Contents\n"
@@ -46,21 +47,21 @@ ROOMS: dict[str, dict] = {
         },
     },
     "Acme Partners - Real Estate Opportunity Fund II": {
-        "stage": "1-Intake",
         "files": {
             "Acme REOF II - Term Sheet.pdf": [
                 "ACME REAL ESTATE OPPORTUNITY FUND II\nSummary of Terms\n"
                 "Investors: qualified purchasers only, under Section 3(c)(7).\n"
                 "Minimum commitment: $5,000,000.\nManagement fee: 2.0% of committed capital.\n"
-                "Carried interest: 20% over an 8% preferred return.\nFund expenses capped at 1.5% per annum.",
+                "Carried interest: 20% over an 8% preferred return.\nFund expenses capped at 1.5% per annum.\n"
+                "Target fund size: $250 million.",
             ],
             "Acme REOF II - Investor Deck.pdf": [
-                "Acme Partners\nInvestor Presentation\nGross returns on prior deals averaged 18%.",
+                "Acme Partners\nInvestor Presentation\nGross returns on prior deals averaged 18%.\n"
+                "Management fee of 1.75% on committed capital.\nTargeting a $400 million fund.",
             ],
         },
     },
     "Bluefield Advisors - Infrastructure Income Fund": {
-        "stage": "2-Managers",
         "files": {
             "Bluefield Infrastructure Income - DDQ.pdf": [
                 "Due Diligence Questionnaire\nThe fund is open to accredited investors.\n"
@@ -68,23 +69,27 @@ ROOMS: dict[str, dict] = {
             ],
         },
     },
+    # Screened, with no gate waiting on review: recipes confirm its disposition without moving the
+    # review counts other recipes check.
+    "Delta Ridge Partners - Evergreen Credit Fund": {
+        "files": {
+            "Delta Ridge Evergreen - Fact Sheet.pdf": [
+                "Delta Ridge Evergreen Credit Fund\nOpen to accredited investors.\nMinimum investment: $25,000.",
+            ],
+        },
+    },
 }
 
-PIPELINE_MD = """# RWP Alternatives Pipeline
+# Pipeline statuses and owners, seeded the way scripts/import_pipeline_md.py imports them.
+STATUSES = {
+    "Northwind Capital - Private Credit Fund I": ("Under review", "Analyst A"),
+    "Acme Partners - Real Estate Opportunity Fund II": ("Triaged", "Analyst B"),
+    "Bluefield Advisors - Infrastructure Income Fund": ("Covered", "Analyst A"),
+    "Delta Ridge Partners - Evergreen Credit Fund": ("Triaged", "Analyst B"),
+}
 
-Last updated: 2026-10-01
-
-## Active
-
-| Manager | Strategy | Status | Owner | Last action | Next action |
-|---|---|---|---|---|---|
-| Northwind Capital | Private Credit Fund I | **Under review** | Analyst A | Screened 2026-09-30 | Confirm hurdle |
-| Acme Partners | Real Estate Opportunity Fund II | **Triaged** | Analyst B | Extraction complete 2026-09-28 | Screen |
-| Bluefield Advisors | Infrastructure Income Fund | **Covered** | Analyst A | IC approved 2026-09-15 | Annual review |
-"""
-
-# field -> (file, page, quote, value). Quotes are verbatim from the pages above.
-FACTS: dict[str, dict[str, tuple[str, int, str, str]]] = {
+# field -> (file, page, quote, value), or a list of them. Quotes are verbatim from the pages above.
+FACTS: dict[str, dict[str, tuple[str, int, str, str] | list[tuple[str, int, str, str]]]] = {
     "Northwind Capital - Private Credit Fund I": {
         "investor_standard": (
             "01 Offering/Northwind Private Credit Fund I - PPM.pdf",
@@ -141,6 +146,15 @@ FACTS: dict[str, dict[str, tuple[str, int, str, str]]] = {
             "9.8% net IRR",
         ),
     },
+    "Delta Ridge Partners - Evergreen Credit Fund": {
+        "investor_standard": (
+            "Delta Ridge Evergreen - Fact Sheet.pdf",
+            1,
+            "Open to accredited investors.",
+            "accredited investors",
+        ),
+        "minimum_investment": ("Delta Ridge Evergreen - Fact Sheet.pdf", 1, "Minimum investment: $25,000.", "$25,000"),
+    },
     "Acme Partners - Real Estate Opportunity Fund II": {
         "investor_standard": (
             "Acme REOF II - Term Sheet.pdf",
@@ -150,8 +164,12 @@ FACTS: dict[str, dict[str, tuple[str, int, str, str]]] = {
         ),
         "minimum_investment": ("Acme REOF II - Term Sheet.pdf", 1, "Minimum commitment: $5,000,000.", "$5,000,000"),
         "exemption": ("Acme REOF II - Term Sheet.pdf", 1, "Section 3(c)(7)", "3(c)(7)"),
-        "management_fee": ("Acme REOF II - Term Sheet.pdf", 1, "Management fee: 2.0% of committed capital.", "2.0%"),
-        "admin_expenses": ("Acme REOF II - Term Sheet.pdf", 1, "Fund expenses capped at 1.5% per annum.", "1.5%"),
+        # The deck and the term sheet disagree on the fee, so the cost gate stays open (decisions B6, F3).
+        "management_fee": [
+            ("Acme REOF II - Term Sheet.pdf", 1, "Management fee: 2.0% of committed capital.", "2.0%"),
+            ("Acme REOF II - Investor Deck.pdf", 1, "Management fee of 1.75% on committed capital.", "1.75%"),
+        ],
+        "fund_expenses": ("Acme REOF II - Term Sheet.pdf", 1, "Fund expenses capped at 1.5% per annum.", "1.5%"),
         "incentive_fee": (
             "Acme REOF II - Term Sheet.pdf",
             1,
@@ -166,6 +184,12 @@ FACTS: dict[str, dict[str, tuple[str, int, str, str]]] = {
         ),
     },
 }
+
+
+def sources(entry):
+    """A FACTS entry is one source or a list of them."""
+    return entry if isinstance(entry, list) else [entry]
+
 
 # A fabricated quote on every gate, so the "rejected, quote not on cited page" path is exercised.
 HALLUCINATED = "This sentence does not appear anywhere in the data room."
@@ -207,10 +231,9 @@ def tiny_pdf(pages):
 
 def write_rooms(data_root):
     data_root.mkdir(parents=True, exist_ok=True)
-    (data_root / "PIPELINE.md").write_text(PIPELINE_MD)
     folders = []
     for name, room in ROOMS.items():
-        folder = data_root / room["stage"] / name
+        folder = data_root / name
         index = []
         for rel, pages in room["files"].items():
             pdf = folder / rel
@@ -228,21 +251,16 @@ def write_rooms(data_root):
 
 
 def install_stubs():
-    from sg import extractors, judges, llm
+    from sg import consistency, extractors, judges, llm
 
     def extractor(gate, room, pages):
         t0 = time.time()
         table = FACTS.get(room.name, {})
         facts = [
-            {
-                "field": f["name"],
-                "value": table[f["name"]][3],
-                "file": table[f["name"]][0],
-                "page": table[f["name"]][1],
-                "quote": table[f["name"]][2],
-            }
+            {"field": f["name"], "value": value, "file": file, "page": page, "quote": quote}
             for f in gate["extractor"]["fields"]
             if f["name"] in table
+            for file, page, quote, value in sources(table[f["name"]])
         ]
         first = gate["extractor"]["fields"][0]["name"]
         facts.append(
@@ -264,6 +282,27 @@ def install_stubs():
         )
         return facts
 
+    def marketing(room, catalog):
+        """Acme's deck and term sheet disagree on the fund size."""
+        if not room.name.startswith("Acme"):
+            return []
+        return [
+            {
+                "topic": "Target fund size",
+                "summary": "The deck targets $400 million; the term sheet says $250 million.",
+                "marketing": {
+                    "file": "Acme REOF II - Investor Deck.pdf",
+                    "page": 1,
+                    "quote": "Targeting a $400 million fund.",
+                },
+                "filed": {
+                    "file": "Acme REOF II - Term Sheet.pdf",
+                    "page": 1,
+                    "quote": "Target fund size: $250 million.",
+                },
+            }
+        ]
+
     def judge(gate, brief, questions):
         t0 = time.time()
         have = {f["field"] for f in brief["facts"]}
@@ -273,6 +312,8 @@ def install_stubs():
                 yes = {
                     "sufficient": len(have) >= (1 if gate["id"] == "track_record" else 2),
                     "qp_only": any("qualified purchasers only" in f["quote"] for f in brief["facts"]),
+                    "has_valuation_policy": "valuation_policy" in have,
+                    "fund_level": "net_return" in have,
                 }.get(q["id"], False)
                 # Track record on Northwind is deliberately borderline, so one gate needs analyst review.
                 p = 0.72 if gate["id"] == "track_record" and yes else (0.92 if yes else 0.08)
@@ -286,6 +327,7 @@ def install_stubs():
         return answers
 
     extractors.EXTRACTORS["fixture"] = extractor
+    consistency.MARKETING_CHECK["fixture"] = marketing
     judges.JUDGES["fixture"] = judge
 
 
@@ -315,14 +357,24 @@ def main(workspace):
     os.environ["DATABASE_URL"] = url = fresh_database()
 
     sys.path.insert(0, str(REPO))
+    from sg import fund_status, store
     from sg.catalog import build as build_catalog
     from sg.pipeline import run
 
     install_stubs()
     for folder in folders:
+        status, owner = STATUSES[folder.name]
+        fund_status.import_status(slug(folder.name), status, "Imported from the fixture's pipeline")
+        store.save_intake(slug(folder.name), {"owner": owner})
+    # Northwind was filed long before its screen, so the clock shows a late screen.
+    store.save_intake(
+        "Northwind_Capital_-_Private_Credit_Fund_I",
+        {"referred_by": "Adviser network", "owner": "Analyst A", "filed_on": "2026-09-01", "share_class": "Class I"},
+    )
+    for folder in folders:
         build_catalog(folder)
     # Bluefield stays unscreened, so the "Not screened" state is covered too.
-    for folder in folders[:2]:
+    for folder in [f for f in folders if not f.name.startswith("Bluefield")]:
         run(folder, "fixture", "fixture")
         time.sleep(1.1)  # runs are stamped to the second
     print(data_root)

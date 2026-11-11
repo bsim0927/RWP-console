@@ -26,6 +26,7 @@ export const FUNDS = {
   northwind: { id: 'Northwind_Capital_-_Private_Credit_Fund_I', manager: 'Northwind Capital' },
   acme: { id: 'Acme_Partners_-_Real_Estate_Opportunity_Fund_II', manager: 'Acme Partners' },
   bluefield: { id: 'Bluefield_Advisors_-_Infrastructure_Income_Fund', manager: 'Bluefield Advisors' },
+  delta: { id: 'Delta_Ridge_Partners_-_Evergreen_Credit_Fund', manager: 'Delta Ridge Partners' },
 };
 
 export const test = base.extend({
@@ -54,6 +55,8 @@ export const test = base.extend({
     page.on('response', r => {
       if (r.url().includes('/api/') && r.status() >= 400 && !allowed('api', r.url())) problems.push(`HTTP ${r.status()}: ${r.url()}`);
     });
+    // A deployed console behind SITE_PASSWORD: sign in first. The session cookie lands in the page's context.
+    if (process.env.E2E_SITE_PASSWORD) await page.request.post('/login', { form: { password: process.env.E2E_SITE_PASSWORD }, maxRedirects: 0 });
     await use(page);
     if (problems.length) {
       await testInfo.attach('page-problems', { body: problems.join('\n'), contentType: 'text/plain' });

@@ -23,24 +23,31 @@ the result. Low-confidence answers go to an analyst.
 
 | What | Where |
 |---|---|
-| Data rooms (PDFs and `_index/pages.jsonl`) | Local disk, the data root (default `~/Desktop/RWP`) |
+| Fund documents and each room's `_index/pages.jsonl` | Local disk, the data root (default `~/Desktop/RWP-funds`): one folder per fund, nothing else |
 | Runs, model calls, document catalogs | Supabase Postgres |
+| Intake, analyst reviews and checks, confirmed dispositions, screen notes | Supabase Postgres, every change kept |
+| Each fund's pipeline status, moved only by the CIO | Supabase Postgres (`fund_status`), every move kept |
 | Gates and disposition policy | Supabase Postgres, edited and versioned in the console |
 | API keys and the database URL | `.env` (never committed) |
 
 ## Running it
 
 Needs [uv](https://docs.astral.sh/uv/), Node 22, and `.env` with `ANTHROPIC_API_KEY`, `JEV_API_KEY`
-(`./setup-keys.sh` sets them) and `DATABASE_URL` (see CONTRIBUTING.md).
+(`./setup-keys.sh` sets them) and `DATABASE_URL` (see CONTRIBUTING.md). The Drive is only a source of fund
+documents: `scripts/reorganize_data_root.py` copies each fund's files (no `.md` notes, no stage or firm
+folders) from a Drive download into the data root, one folder per fund, and leaves the download untouched.
 
     make setup                                    # once: tooling and git hooks
+    uv run python scripts/reorganize_data_root.py <drive-download> ~/Desktop/RWP-funds --yes   # once per download
     uv run python server.py [data-root]           # the console, at http://127.0.0.1:8765 (PORT= to change)
     uv run python screen.py <data-room-folder>    # screen one data room from the command line
+    scripts/deploy-vercel.sh                      # deploy to Vercel (walks you through it; CONTRIBUTING.md)
 
 The console covers the overview, the screening queue, each fund (screen, catalog, files, search, history,
-report), catalogs, a file browser, document search, analytics, the agent monitor, and gates and policy.
-It changes data only when you run a screen, rebuild a catalog, or edit a gate or the policy. The previous
-single-page viewer is still at `/legacy`.
+note, report), catalogs, a file browser, document search, analytics, the agent monitor, and gates and policy.
+It changes data when you run a screen, rebuild a catalog, edit a gate, the policy or the reviewers, save a
+fund's intake, review a gate, confirm a disposition, or draft or edit a screen note. The previous single-page
+viewer is still at `/legacy`.
 
 ## Development
 

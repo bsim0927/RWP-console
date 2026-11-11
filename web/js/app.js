@@ -20,6 +20,9 @@ export const onJobs = fn => (listeners.add(fn), () => listeners.delete(fn));
 
 export async function startScreen(fundId, extractor, judge) {
   const r = await api('screen', { method: 'POST', body: JSON.stringify({ fund: fundId, extractor, judge }) });
+  // The run request lasts the whole screen; nothing waits on it. Progress and the outcome come from polling
+  // the job, which the server writes as the screen runs.
+  api(`screen/${r.job}/run`, { method: 'POST' }).catch(() => { /* the job records any failure */ });
   jobs.set(fundId, { id: r.job, fundId, state: { status: 'running', steps: [], gates: [], elapsed: 0 } });
   toast(`Screen started for <b>${esc(splitName(fundId.replaceAll('_', ' ')).manager)}</b>`, 'accent', 'play-circle');
   pollJobs();
@@ -128,7 +131,7 @@ function initOmni() {
     const funds = await cached('funds');
     const hits = funds.filter(f => f.name.toLowerCase().includes(v)).slice(0, 7);
     items = [
-      ...hits.map(f => ({ href: `#/fund/${encodeURIComponent(f.id)}`, html: `<span class="dot ${dispTone(f.latest?.disposition)}"></span><span>${esc(f.name)}</span><span class="sp"></span><span class="dim" style="font-size:11px">${esc(f.pipeline?.Status || '')}</span>` })),
+      ...hits.map(f => ({ href: `#/fund/${encodeURIComponent(f.id)}`, html: `<span class="dot ${dispTone(f.latest?.disposition)}"></span><span>${esc(f.name)}</span><span class="sp"></span><span class="dim" style="font-size:11px">${esc(f.status?.status || '')}</span>` })),
       { href: `#/search?${q({ q: inp.value.trim() })}`, html: `<sl-icon name="search"></sl-icon><span>Search all documents for <b>${esc(inp.value.trim())}</b></span><span class="sp"></span><kbd>Enter</kbd>` },
     ];
     sel = hits.length ? 0 : items.length - 1;
@@ -160,7 +163,7 @@ async function init() {
   try {
     const [meta, cfg] = await Promise.all([api('meta'), cached('config', 60000)]);
     setGateOrder(cfg.gates.map(g => g.parsed.id));
-    $('#nav-foot').innerHTML = `<div>${meta.rooms} indexed data rooms</div><div class="mono" title="Data root">${esc(meta.data_root)}</div>`;
+    $('#nav-foot').innerHTML = `<div>${meta.rooms} indexed data rooms</div><div class="mono" title="Data root">${esc(meta.data_root)}</div>${meta.password ? '<a href="/logout">Sign out</a>' : ''}`;
   } catch (e) { toast('Server unreachable: ' + esc(e.message), 'crit'); }
   // Pick up screens still running on the server, e.g. after a page reload.
   try {

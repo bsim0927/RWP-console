@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from . import gate_store, store
+from . import consistency, gate_store, store
 from .catalog import load as load_catalog
 from .dataroom import DataRoom
 from .extractors import EXTRACTORS
@@ -29,18 +29,18 @@ def load_gates(only=None, with_yaml=False):
 
 
 def code_checks(gate, facts):
-    """Deterministic numbers. Jev is weak on arithmetic, so it never does any."""
-    ctx: dict[str, float | None] = {"total_pct": None}
-    recurring = {f["name"] for f in gate["extractor"]["fields"] if f.get("recurring")}
-    vals = []
+    """Deterministic numbers. Jev is weak on arithmetic, so it never does any.
+    Each counted (recurring) fee layer is summed once; a layer quoted at two rates means the
+    documents disagree, and then there is no honest total."""
+    counted = {f["name"] for f in gate["extractor"]["fields"] if f.get("recurring")}
+    rates: dict[str, set[float]] = {}
     for f in facts:
-        if f["field"] in recurring:
-            m = re.search(r"(\d+(?:\.\d+)?)\s*%", f["value"])
-            if m:
-                vals.append(float(m.group(1)))
-    if recurring:
-        ctx["total_pct"] = round(sum(vals), 3) if vals else None
-    return ctx
+        m = f["field"] in counted and re.search(r"(\d+(?:\.\d+)?)\s*%", f["value"])
+        if m:
+            rates.setdefault(f["field"], set()).add(round(float(m.group(1)), 3))
+    conflicts = {k: sorted(v) for k, v in rates.items() if len(v) > 1}
+    total = round(sum(min(v) for v in rates.values()), 3) if rates and not conflicts else None
+    return {"total_pct": total, "fees_disagree": bool(conflicts), "fee_conflicts": conflicts}
 
 
 def resolve(questions, answers):
@@ -58,41 +58,70 @@ def resolve(questions, answers):
     return env, conf
 
 
+def holds(cond, env):
+    # Config is trusted and local. No builtins exposed to the expression.
+    return bool(eval(cond if cond is not None else "True", {"__builtins__": {}}, env))
+
+
 def derive(rules, env):
     for r in rules:
-        cond = r.get("if", "True")
-        # Config is trusted and local. No builtins exposed to the expression.
-        if eval(cond, {"__builtins__": {}}, env):
+        if holds(r.get("if"), env):
             return r["then"]
     return "Incomplete"
 
 
-class Tracker:
-    """Thread-safe record of pipeline steps, shared by the live viewer and the run log."""
+def raise_flags(flags, env):
+    """What the analyst should know beyond the result, e.g. QP-only. A flag without a condition always shows."""
+    return [f["flag"] for f in flags or [] if holds(f.get("if"), env)]
 
-    def __init__(self):
+
+class Tracker:
+    """Thread-safe record of pipeline steps, shared by the live viewer and the run log. on_change, if given,
+    receives a copy of the steps after every change (the console writes them to the job)."""
+
+    def __init__(self, on_change=None):
         self.t0 = time.time()
         self.steps = []
         self.lock = threading.Lock()
+        self.on_change = on_change
+
+    def _changed(self):
+        if self.on_change:
+            with self.lock:
+                snapshot = [dict(e) for e in self.steps]
+            self.on_change(snapshot)
 
     def begin(self, gate, step):
         e = {"gate": gate, "step": step, "start": round(time.time() - self.t0, 3), "end": None, "detail": ""}
         with self.lock:
             self.steps.append(e)
+        self._changed()
         return e
 
     def end(self, e, detail=""):
         e["end"] = round(time.time() - self.t0, 3)
         e["detail"] = detail
+        self._changed()
 
 
-def run_gate(gate, room, extractor, judge, tr, catalog=None):
+def for_share_class(gate, share_class):
+    """A fee gate reads the analyst's chosen share class (decision B5); other gates are unchanged."""
+    ex = gate.get("extractor") or {}
+    if not share_class or not any(f.get("recurring") for f in ex.get("fields", [])):
+        return gate
+    rules = f"{ex.get('rules', '')} The analyst chose share class {share_class}: screen that class.".strip()
+    return {**gate, "extractor": {**ex, "rules": rules}}
+
+
+def run_gate(gate, room, extractor, judge, tr, catalog=None, share_class=None):
+    gate = for_share_class(gate, share_class)
     rec = {"gate": gate["id"], "gate_version": gate.get("version"), "extractor": extractor, "judge": judge}
     if gate.get("static_result"):
         e = tr.begin(gate["id"], "skipped")
         tr.end(e, gate["static_result"])
         rec.update(
             result=gate["static_result"],
+            flags=[],
             review=False,
             facts=[],
             rejected=[],
@@ -132,7 +161,22 @@ def run_gate(gate, room, extractor, judge, tr, catalog=None):
         f["match"] = room.verify_quote(f["file"], f["page"], f["quote"])
         (facts if f["match"] else rejected).append(f)
     reflowed = sum(f["match"] == "reflowed" for f in facts)
-    tr.end(e, f"{len(facts)} verified ({reflowed} across layout), {len(rejected)} rejected")
+    # Two documents stating a gate field differently is a finding (decision F3): figures in code, wording by
+    # the run's model when it has one.
+    kind_of = consistency.kinds(catalog)
+    contradictions, wording = consistency.in_code(facts, kind_of)
+    compare, compare_error = consistency.WORDING.get(extractor), None
+    if compare and wording:
+        CTX.set({**ctx, "step": "compare"})
+        try:
+            contradictions += compare(gate["id"], wording, kind_of)
+        except Exception as err:  # the call is in model_calls; the screen goes on with the figures
+            compare_error = f"{type(err).__name__}: {err}"
+    tr.end(
+        e,
+        f"{len(facts)} verified ({reflowed} across layout), {len(rejected)} rejected, "
+        f"{len(contradictions)} contradiction{'' if len(contradictions) == 1 else 's'}",
+    )
     names = {f["name"] for f in ex["fields"]}
     missing = sorted(names - {f["field"] for f in facts})
     checks = code_checks(gate, facts)
@@ -144,14 +188,19 @@ def run_gate(gate, room, extractor, judge, tr, catalog=None):
     tr.end(e, f"{len(questions)} questions")
     e = tr.begin(gate["id"], "derive")
     env, conf = resolve(questions, answers)
-    env.update(checks)
+    env.update({k: checks[k] for k in gate_store.CHECK_NAMES})
     result = derive(gate["derive"], env)
+    flags = raise_flags(gate.get("flags"), env)
     decisive = gate.get("review_if", {}).get("decisive", [q["id"] for q in questions])
     floor = gate.get("review_if", {}).get("min_confidence", 0.75)
     low = [i for i in decisive if conf[i] < floor]
-    tr.end(e, result)
+    tr.end(e, result + "".join(f" · {f}" for f in flags))
     rec.update(
         result=result,
+        flags=flags,
+        checks=gate.get("checks") or [],
+        contradictions=contradictions,
+        compare_error=compare_error,
         review=bool(low),
         low_confidence=low,
         brief=brief,
@@ -168,6 +217,23 @@ def run_gate(gate, room, extractor, judge, tr, catalog=None):
     return rec
 
 
+def check_marketing(room, catalog, extractor, tr):
+    """Room-wide (decision F3): marketing statements a filed document contradicts. Needs a model adapter, so
+    stub and fixture runs skip it. Returns (findings, error)."""
+    fn = consistency.MARKETING_CHECK.get(extractor)
+    if not fn:
+        return [], None
+    e = tr.begin("consistency", "compare")
+    CTX.set({"fund": room.name, "gate": "consistency", "step": "compare"})
+    try:
+        found = consistency.verified(room, fn(room, catalog))
+    except Exception as err:  # the call is in model_calls; the screen goes on without this check
+        tr.end(e, "failed")
+        return [], f"{type(err).__name__}: {err}"
+    tr.end(e, f"{len(found)} marketing statement{'' if len(found) == 1 else 's'} contradicted")
+    return found, None
+
+
 def reduce_gates(policy, results):
     flags = {
         "any_fail": any(r["result"] == "Fail" for r in results),
@@ -181,16 +247,21 @@ def reduce_gates(policy, results):
 
 
 def run(data_room, extractor, judge, only=None, tracker=None):
-    room = DataRoom(data_room)
+    """Screen a room: a DataRoom, or the folder of one on disk."""
+    room = data_room if isinstance(data_room, DataRoom) else DataRoom(data_room)
     pol = store.policy()
     policy = yaml.safe_load(pol["yaml"])
     tr = tracker or Tracker()
     gates, gate_yaml = load_gates(only, with_yaml=True)
     e = tr.begin("catalog", "catalog")
-    catalog = load_catalog(data_room)
+    catalog = load_catalog(room)
     tr.end(e, f"{sum(d['canonical'] for d in catalog)} canonical documents")
-    with ThreadPoolExecutor(max_workers=len(gates)) as pool:
-        results = list(pool.map(lambda g: run_gate(g, room, extractor, judge, tr, catalog), gates))
+    fund_id = room.id
+    share_class = store.intake(fund_id)["share_class"]
+    with ThreadPoolExecutor(max_workers=len(gates) + 1) as pool:
+        marketing = pool.submit(check_marketing, room, catalog, extractor, tr)
+        results = list(pool.map(lambda g: run_gate(g, room, extractor, judge, tr, catalog, share_class), gates))
+        marketing_found, marketing_error = marketing.result()
     for r in results:
         r["timeline"] = [e for e in tr.steps if e["gate"] == r["gate"]]
     disposition, flags = reduce_gates(policy, results)
@@ -200,15 +271,22 @@ def run(data_room, extractor, judge, only=None, tracker=None):
         "run": stamp,
         "extractor": extractor,
         "judge": judge,
+        "share_class": share_class,
         "disposition": disposition,
         "flags": flags,
+        "marketing_contradictions": marketing_found,
+        "marketing_check_error": marketing_error,
         "seconds": round(time.time() - tr.t0, 2),
         "gates": {
-            r["gate"]: {"result": r["result"], "review": r.get("review"), "min_confidence": r.get("min_confidence")}
+            r["gate"]: {
+                "result": r["result"],
+                "flags": r.get("flags", []),
+                "review": r.get("review"),
+                "min_confidence": r.get("min_confidence"),
+            }
             for r in results
         },
     }
-    fund_id = re.sub(r"[^\w.-]+", "_", room.name)
     store.save_run(fund_id, summary, results, render_md(summary, results), gate_yaml, pol["id"])
     return f"{fund_id}/{stamp}", summary, results
 
@@ -217,16 +295,18 @@ def render_md(summary, results):
     L = [
         f"# Screen run: {summary['fund']}",
         "",
-        f"Run {summary['run']}. Extractor `{summary['extractor']}`, judge `{summary['judge']}`.",
+        f"Run {summary['run']}. Extractor `{summary['extractor']}`, judge `{summary['judge']}`."
+        + (f" Share class screened: {summary['share_class']}." if summary.get("share_class") else ""),
         "",
         f"**{summary['disposition']}**",
         "",
-        "| Gate | Result | Analyst review | Evidence |",
-        "|---|---|---|---|",
+        "| Gate | Result | Flags | Analyst review | Evidence |",
+        "|---|---|---|---|---|",
     ]
     for r in results:
         ev = "; ".join(f"{f['file'].split('/')[-1]} p.{f['page']}" for f in r.get("brief", {}).get("facts", [])[:4])
-        L.append(f"| {r['gate']} | {r['result']} | {'yes' if r.get('review') else 'no'} | {ev or 'none'} |")
+        flags = "; ".join(r.get("flags") or []) or "none"
+        L.append(f"| {r['gate']} | {r['result']} | {flags} | {'yes' if r.get('review') else 'no'} | {ev or 'none'} |")
     L.append("")
     for r in results:
         b = r.get("brief")
@@ -237,7 +317,19 @@ def render_md(summary, results):
             L.append(f"- **{f['field']}**: {f['value']}  ({f['file'].split('/')[-1]}, p.{f['page']})")
         if b["not_found"]:
             L.append(f"- Not found: {', '.join(b['not_found'])}")
+        for c in r.get("contradictions") or []:
+            where = "; ".join(f"{v['file'].split('/')[-1]} p.{v['page']}: {v['value']}" for v in c["values"])
+            L.append(f"- Documents disagree on **{c['field']}**: {c['summary']} ({where})")
         if r["rejected"]:
             L.append(f"- Rejected, quote not on cited page: {len(r['rejected'])}")
+        L.append("")
+    if summary.get("marketing_contradictions"):
+        L += ["## Marketing against filed documents", ""]
+        for c in summary["marketing_contradictions"]:
+            m, f = c["marketing"], c["filed"]
+            L.append(
+                f'- **{c["topic"]}**: {c["summary"]} Marketing: "{m["quote"]}" ({m["file"].split("/")[-1]} p.{m["page"]}). '
+                f'Filed: "{f["quote"]}" ({f["file"].split("/")[-1]} p.{f["page"]}).'
+            )
         L.append("")
     return "\n".join(L)

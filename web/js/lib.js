@@ -9,6 +9,7 @@ export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;'
 // ---------- api ----------
 export async function api(path, opts) {
   const r = await fetch('/api/' + path, opts);
+  if (r.status === 401) { location.href = '/login'; throw new Error('sign in first'); } // the session ran out
   const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
   if (!r.ok || (body && body.error && !Array.isArray(body))) throw new Error(body.error || `HTTP ${r.status}`);
   return body;
@@ -38,6 +39,8 @@ export function ago(d) {
   if (s < 86400 * 120) return Math.floor(s / 86400) + 'd ago';
   return fmtDate(d);
 }
+// A calendar date (YYYY-MM-DD) at local midnight, so it never shows as the day before.
+export const day = s => new Date(s + 'T00:00:00');
 export const fmtDate = d => (d instanceof Date ? d : new Date(d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 export const fmtDT = d => (d instanceof Date ? d : new Date(d)).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 export const fmtTime = t => new Date(t * 1000).toLocaleTimeString('en-US', { hour12: false });
@@ -56,25 +59,35 @@ export function resultTone(r) {
   if (r === 'Pass') return 'good';
   if (r === 'Fail') return 'crit';
   if (r === 'Incomplete') return 'warn';
-  if (r.startsWith('Route')) return 'serious';
+  if (r.startsWith('Route')) return 'serious'; // runs from before decision B6 dropped this result
   return 'none';
 }
 const RESULT_ICON = { good: 'check-lg', crit: 'x-lg', warn: 'hourglass-split', serious: 'signpost-split', none: 'dash' };
 export const resultIcon = r => RESULT_ICON[resultTone(r)];
-export const RESULT_KEYS = ['Pass', 'Route with disclosure', 'Incomplete', 'Fail', 'Not yet run'];
+export const RESULT_KEYS = ['Pass', 'Incomplete', 'Fail', 'Not yet run'];
 export const toneVar = t => ({ good: 'var(--good)', crit: 'var(--crit)', warn: 'var(--warn)', serious: 'var(--serious)', none: 'var(--none)' }[t]);
 
 export function resultChip(r, review) {
   const t = resultTone(r);
   return `<span class="chip ${t}"><sl-icon name="${RESULT_ICON[t]}"></sl-icon>${esc(r || 'Not run')}</span>${review ? ` <span class="rv-flag" title="Low judge confidence, goes to an analyst"><sl-icon name="person-check"></sl-icon>Review</span>` : ''}`;
 }
+// The five-business-day screen clock from /api/funds (decision G4).
+export function clockChip(c) {
+  if (!c) return '';
+  const due = fmtDate(day(c.due));
+  if (c.done) return c.late ? `<span class="chip crit" title="Due ${due}"><sl-icon name="alarm"></sl-icon>Screened late</span>` : `<span class="chip good" title="Due ${due}"><sl-icon name="check2"></sl-icon>On time</span>`;
+  if (c.late) return `<span class="chip crit"><sl-icon name="alarm"></sl-icon>Late · due ${due}</span>`;
+  return `<span class="chip ${c.days_left <= 1 ? 'warn' : 'ghost'}"><sl-icon name="clock"></sl-icon>Due ${due} · ${c.days_left} business day${c.days_left === 1 ? '' : 's'} left</span>`;
+}
+// What a gate wants the analyst to know beyond its result, e.g. QP-only.
+export const flagChips = flags => (flags || []).map(f => `<span class="chip ghost flag"><sl-icon name="flag"></sl-icon>${esc(f)}</span>`).join('');
 // One square per gate, in policy order, with a tooltip.
 export function gateStrip(gates) {
   if (!gates) return '<span class="dim">Not screened</span>';
   return `<span class="gs">${GATE_ORDER.map(g => {
     const x = gates[g] || {};
     const t = resultTone(x.result);
-    return `<i class="${t} ${x.review ? 'rv' : ''}" data-tip="<b>${esc(gateName(g))}</b><br>${esc(x.result || 'No result')}${x.min_confidence != null ? ` <span class=dim>· confidence ${pct(x.min_confidence)}</span>` : ''}${x.review ? '<br><span class=dim>Analyst review</span>' : ''}"><sl-icon name="${RESULT_ICON[t]}"></sl-icon></i>`;
+    return `<i class="${t} ${x.review ? 'rv' : ''}" data-tip="<b>${esc(gateName(g))}</b><br>${esc(x.result || 'No result')}${x.min_confidence != null ? ` <span class=dim>· confidence ${pct(x.min_confidence)}</span>` : ''}${(x.flags || []).map(f => `<br><span class=dim>Flag:</span> ${esc(f)}`).join('')}${x.review ? '<br><span class=dim>Analyst review</span>' : ''}"><sl-icon name="${RESULT_ICON[t]}"></sl-icon></i>`;
   }).join('')}</span>`;
 }
 
@@ -90,8 +103,11 @@ export const dispNote = d => (d && d.match(/\((.*)\)$/)?.[1]) || '';
 const DISP_ICON = { good: 'shield-check', crit: 'slash-circle', warn: 'hourglass-split', none: 'circle' };
 export const dispChip = (d, lg) => { const t = dispTone(d); return `<span class="chip ${t} ${lg ? 'lg' : ''}" title="${esc(d || '')}"><sl-icon name="${DISP_ICON[t]}"></sl-icon>${esc(dispShort(d))}</span>`; };
 export const dispIcon = d => DISP_ICON[dispTone(d)];
+// Where a disposition stands (decision F5): a draft until an analyst confirms it; "not covered" also needs the CIO.
+const DECISION = { draft: ['ghost', 'pencil-square', 'Draft'], confirmed: ['good', 'patch-check', 'Confirmed'], awaiting_signoff: ['warn', 'hourglass-split', 'Awaiting CIO sign-off'], signed_off: ['good', 'patch-check', 'Signed off'] };
+export const decisionChip = d => { if (!d) return ''; const [t, icon, label] = DECISION[d.state] || DECISION.draft; return `<span class="chip ${t}"><sl-icon name="${icon}"></sl-icon>${label}</span>`; };
 
-// Pipeline statuses from PIPELINE.md, in process order.
+// Pipeline statuses (sg/fund_status.STATUSES), in process order. Only the CIO moves them.
 export const PIPE_ORDER = ['Not reviewed', 'Triaged', 'Under review', 'Deep DD', 'IC ready', 'Covered', 'Watch', 'Reviewed and not covered'];
 const PIPE_TONE = { 'Not reviewed': 'none', Triaged: 'ghost', 'Under review': 'warn', 'Deep DD': 'accent', 'IC ready': 'accent', Covered: 'good', Watch: 'serious', 'Reviewed and not covered': 'crit' };
 const PIPE_ICON = { 'Not reviewed': 'inbox', Triaged: 'list-check', 'Under review': 'hourglass-split', 'Deep DD': 'search', 'IC ready': 'people', Covered: 'shield-check', Watch: 'eye', 'Reviewed and not covered': 'slash-circle' };
@@ -274,9 +290,10 @@ export function markdown(src) {
       out += `<div class="tbl-wrap"><table><tr>${cells(rows[0]).map(c => `<th>${inline(c)}</th>`).join('')}</tr>${body.map(r => `<tr>${cells(r).map(c => `<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</table></div>`; continue;
     }
     if (/^\s*[-*] /.test(l)) { out += '<ul>'; while (i < lines.length && /^\s*[-*] /.test(lines[i])) out += `<li>${inline(lines[i++].replace(/^\s*[-*] /, ''))}</li>`; out += '</ul>'; continue; }
+    if (/^\s*\d+\. /.test(l)) { out += '<ol>'; while (i < lines.length && /^\s*\d+\. /.test(lines[i])) out += `<li>${inline(lines[i++].replace(/^\s*\d+\. /, ''))}</li>`; out += '</ol>'; continue; }
     if (/^---+$/.test(l.trim())) { out += '<hr>'; i++; continue; }
     if (!l.trim()) { i++; continue; }
-    const para = []; while (i < lines.length && lines[i].trim() && !/^(#|\||\s*[-*] |---)/.test(lines[i])) para.push(lines[i++]);
+    const para = []; while (i < lines.length && lines[i].trim() && !/^(#|\||\s*[-*] |\s*\d+\. |---)/.test(lines[i])) para.push(lines[i++]);
     out += `<p>${inline(para.join(' '))}</p>`;
   }
   return `<div class="md">${out}</div>`;
@@ -291,8 +308,6 @@ export function fileIcon(name, dir) {
   const ic = { pdf: 'file-earmark-pdf', md: 'file-earmark-text', xls: 'file-earmark-spreadsheet', doc: 'file-earmark-richtext', img: 'file-earmark-image' }[k] || 'file-earmark';
   return `<sl-icon class="ficon ${k || ''}" name="${ic}"></sl-icon>`;
 }
-// Real path under a Drive download part ("RWP-<stamp>-1-002/RWP/...") -> path in the merged RWP tree.
-export const mergedPath = p => p.replace(/^[^/]+-\d{8}T\d{6}Z-\d+-\d{3}\/[^/]+\//, '');
 export const rawUrl = (path, page) => `/api/raw?${q({ path })}${page ? '#page=' + page : ''}`;
 
 function highlight(text, quote) {
@@ -316,7 +331,7 @@ export async function openPreview(path, { page, quote, title, back } = {}) {
   const ext = extOf(name);
   d.classList.add('wide');
   d.label = title || name;
-  const dirPath = mergedPath(path).split('/').slice(0, -1).join('/');
+  const dirPath = path.split('/').slice(0, -1).join('/');
   const head = `<div class="bar" style="margin-bottom:14px">
     ${back ? `<button class="ghost-btn sm" data-back><sl-icon name="arrow-left"></sl-icon>${esc(back.label)}</button>` : ''}
     <span class="path dim mono" style="font-size:11.5px">${esc(dirPath)}</span><span class="sp"></span>
