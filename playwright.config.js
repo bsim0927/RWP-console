@@ -14,6 +14,8 @@ export default defineConfig({
   forbidOnly: CI,
   retries: CI ? 1 : 0,
   workers: CI ? 2 : undefined,
+  // A deployed console answers in seconds (its database is a continent away from the test), not milliseconds.
+  expect: { timeout: REMOTE ? 15_000 : 5_000 },
   reporter: CI
     ? [['github'], ['html', { outputFolder: 'e2e/.report', open: 'never' }], ['junit', { outputFile: 'e2e/.results/junit.xml' }]]
     : [['list'], ['html', { outputFolder: 'e2e/.report', open: 'never' }]],
