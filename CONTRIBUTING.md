@@ -76,6 +76,9 @@ deployed console works:
   every path to it, static files included. Vercel only accepts `functions` keys under `api/`, so the
   entrypoint cannot be `server.py` itself. `vercel.json` sets a 300-second limit and keeps tests and tooling
   out of the bundle. The local server runs the very same handler.
+- **Next to the database.** `vercel.json` pins the function to `pdx1` (Portland), beside Supabase's
+  `us-west-2`: a page makes a dozen or so sequential queries, so each cross-country round trip shows. If the
+  Supabase project ever moves, move `regions` with it.
 - **No memory between requests.** A screen is queued, then run inside the request that claims it
   (`POST /api/screen/<job>/run`), writing its steps to `screen_jobs`; the browser polls the job. The agent
   monitor's log is `console_events`.
